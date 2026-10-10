@@ -1,0 +1,33 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "status-monitor",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-10-10",
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [],
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"],
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "status-monitor",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations",
+    },
+  ],
+  "triggers": {
+    "crons": ["17 * * * *"],
+  },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 0.1,
+  },
+  "vars": {
+    "SITE_DOMAIN": "",
+  },
+}

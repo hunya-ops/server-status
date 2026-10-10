@@ -1,0 +1,3 @@
+# Required for new instances. Use your own random key (at least 32 characters).
+# Blank examples are intentional: never use a shared template secret.
+SETUP_KEY=

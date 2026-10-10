@@ -1,0 +1,6 @@
+{
+  "serverId": "example-server",
+  "endpoint": "https://status.example.com/api/ingest",
+  "token": "REPLACE_WITH_GENERATED_AGENT_TOKEN",
+  "interval": 60
+}

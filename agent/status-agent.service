@@ -1,0 +1,31 @@
+[Unit]
+Description=Status server metrics agent
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=status-agent
+Group=status-agent
+ExecStart=/usr/bin/python3 /opt/status-agent/status_agent.py --config /etc/status-agent/config.json
+Restart=always
+RestartSec=15
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+MemoryMax=64M
+TasksMax=10
+CPUQuota=5%
+Environment=PYTHONDONTWRITEBYTECODE=1
+
+[Install]
+WantedBy=multi-user.target
