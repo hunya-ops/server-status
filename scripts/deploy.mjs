@@ -1,12 +1,18 @@
 import { spawnSync } from "node:child_process";
-import { writeDeploymentConfig } from "./deployment-config.mjs";
+import {
+  deploymentConfig,
+  writeDeploymentConfig,
+} from "./deployment-config.mjs";
+import { preserveDashboardDomains } from "./dashboard-domains.mjs";
 const dryRun = process.argv.includes("--dry-run");
 if (!dryRun && process.env.CI !== "true" && !process.env.WORKERS_CI) {
   throw new Error(
     "Publish through GitHub and Cloudflare Workers Builds. Use npm run deploy:check for a local dry run.",
   );
 }
-const config = await writeDeploymentConfig();
+const settings = await deploymentConfig();
+if (!dryRun) await preserveDashboardDomains(settings);
+const config = await writeDeploymentConfig(settings);
 const cli = "node_modules/wrangler/bin/wrangler.js";
 function command(args) {
   const result = spawnSync(

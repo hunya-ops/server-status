@@ -5,7 +5,6 @@
   "compatibility_date": "2026-10-10",
   "workers_dev": true,
   "preview_urls": false,
-  "routes": [],
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",
@@ -26,8 +25,5 @@
   "observability": {
     "enabled": true,
     "head_sampling_rate": 0.1,
-  },
-  "vars": {
-    "SITE_DOMAIN": "",
   },
 }

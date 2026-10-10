@@ -19,7 +19,10 @@ export async function deploymentConfig(
     if (error.code !== "ENOENT") throw error;
   }
   const values = {
-    name: environment.STATUS_WORKER_NAME || instance.name,
+    name:
+      environment.WRANGLER_CI_OVERRIDE_NAME ||
+      environment.STATUS_WORKER_NAME ||
+      instance.name,
     domain: environment.STATUS_DOMAIN || instance.domain,
     accountId: environment.STATUS_ACCOUNT_ID || instance.accountId,
     databaseId: environment.STATUS_DATABASE_ID || instance.databaseId,
@@ -56,8 +59,8 @@ export async function deploymentConfig(
   return config;
 }
 
-export async function writeDeploymentConfig() {
-  const config = await deploymentConfig();
+export async function writeDeploymentConfig(config) {
+  config ??= await deploymentConfig();
   await mkdir(".wrangler", { recursive: true });
   const path = resolve(".wrangler/deployment.json");
   await writeFile(path, JSON.stringify(config, null, 2) + "\n");

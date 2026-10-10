@@ -18,15 +18,12 @@
 
 ### 域名与默认地址开关
 
-绑定自己的域名是可选的。在 Cloudflare 控制台进入 **Workers & Pages → 选择 Worker → Settings → Domains & Routes → Add → Custom Domain**，添加账号下的域名。也可在自己的仓库中把 `wrangler.jsonc` 的 `vars.SITE_DOMAIN` 设为 `status.example.com`，推送后由部署脚本生成绑定。绑定自定义域名后，默认地址仍可同时使用。
+域名设置都在 Cloudflare 控制台完成，无需修改仓库文件。进入 **Workers & Pages → 选择 Worker → Settings → Domains & Routes**：
 
-是否启用默认域名由 `wrangler.jsonc` 的顶层 `workers_dev` 控制：
+- **绑定自己的域名**：点击 **Add → Custom Domain**，填写账号下的域名，例如 `status.example.com`。绑定后，默认地址也可继续使用。
+- **关闭或开启默认地址**：在 `workers.dev` 地址旁点击 **Disable / Enable**。
 
-```jsonc
-"workers_dev": true // 启用；设为 false 则关闭
-```
-
-修改后推送部署分支即可生效。也可在 Cloudflare 的 **Settings → Domains & Routes** 中，对 `workers.dev` 地址选择 **Enable / Disable**；通过控制台修改后，应同步修改仓库配置，否则下次自动部署会按仓库配置恢复开关。参见 [Cloudflare 默认域名文档](https://developers.cloudflare.com/workers/configuration/routing/workers-dev/)。
+首次部署默认启用 `workers.dev`。后续自动部署会保留控制台中的默认地址开关、自定义域名和路由。开关位置参见 [Cloudflare 默认域名文档](https://developers.cloudflare.com/workers/configuration/routing/workers-dev/)。
 
 已安装的 agent 会持续使用安装时的地址。关闭默认域名前，先将服务器 `/etc/status-agent/config.json` 中的 `endpoint` 改为新域名的 `https://status.example.com/api/ingest`，保留服务器 ID 和 token，并执行 `systemctl restart status-agent`。模板的 `preview_urls` 默认为 `false`，它与生产默认域名开关独立。
 
@@ -111,15 +108,14 @@ npm run test:integration
 
 已有实例的部署参数可放在 Cloudflare Build variables 中，避免在公共源码中固定任何账号和资源：
 
-| 构建变量               | 用途                                     |
-| ---------------------- | ---------------------------------------- |
-| `STATUS_WORKER_NAME`   | 已有 Worker 名称                         |
-| `STATUS_DOMAIN`        | 自有域名                                 |
-| `STATUS_ACCOUNT_ID`    | Cloudflare 账号                          |
-| `STATUS_DATABASE_ID`   | 已有 D1 ID                               |
-| `STATUS_DATABASE_NAME` | 已有 D1 名称                             |
-| `STATUS_WORKERS_DEV`   | 可选，`true` / `false`；覆盖默认域名开关 |
+| 构建变量               | 用途                           |
+| ---------------------- | ------------------------------ |
+| `STATUS_WORKER_NAME`   | 已有 Worker 名称               |
+| `STATUS_DOMAIN`        | 可选，首次部署时绑定的自有域名 |
+| `STATUS_ACCOUNT_ID`    | Cloudflare 账号                |
+| `STATUS_DATABASE_ID`   | 已有 D1 ID                     |
+| `STATUS_DATABASE_NAME` | 已有 D1 名称                   |
 
-本地开发可把相同参数放入忽略提交的 `.local/deployment.json`，字段为 `name`、`domain`、`accountId`、`databaseId`、`databaseName` 和可选布尔值 `workersDev`。这份文件不参与 GitHub 自动构建；线上构建必须使用构建变量。构建变量优先于本地实例配置；未提供覆盖值时使用 `wrangler.jsonc` 的 `workers_dev`。生成的 Wrangler 文件位于 `.wrangler/deployment.json`。
+本地开发可把相同参数放入忽略提交的 `.local/deployment.json`，字段为 `name`、`domain`、`accountId`、`databaseId` 和 `databaseName`。这份文件不参与 GitHub 自动构建；线上构建必须使用构建变量。构建变量优先于本地实例配置，Workers Builds 提供的 Worker 名称优先。已有 Worker 的域名设置以控制台为准，旧的 `STATUS_WORKERS_DEV` / `workersDev` 参数只影响首次部署和本地检查。生成的 Wrangler 文件位于 `.wrangler/deployment.json`。
 
 部署命令始终通过 `DB` 绑定执行迁移，不依赖数据库名称。Secrets 保存在运行时配置中，构建变量用于部署资源配置，两者用途不同。
