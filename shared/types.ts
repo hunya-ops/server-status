@@ -33,11 +33,18 @@ export interface Report {
   uptimeSeconds: number;
 }
 
+export interface ServerNetwork {
+  ip: string;
+  country: string | null;
+  city: string | null;
+}
+
 export interface ServerSnapshot {
   id: string;
   name: string;
   lastSeen: number | null;
   report: Report | null;
+  network?: ServerNetwork | null;
   enabled?: boolean;
   intervalSeconds?: number;
   warningPercent?: number;

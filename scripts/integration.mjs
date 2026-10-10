@@ -102,7 +102,7 @@ child.stderr.on("data", (chunk) => {
 const origin = `http://127.0.0.1:${port}`;
 async function request(
   path,
-  { method = "GET", body, cookie, bearer, from = origin } = {},
+  { method = "GET", body, cookie, bearer, from = origin, headers = {} } = {},
 ) {
   return fetch(origin + path, {
     method,
@@ -111,6 +111,7 @@ async function request(
       Origin: from,
       ...(cookie ? { Cookie: cookie } : {}),
       ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}),
+      ...headers,
     },
     body: body === undefined ? undefined : JSON.stringify(body),
     signal: AbortSignal.timeout(15000),
@@ -458,6 +459,11 @@ try {
     method: "POST",
     body: sample,
     bearer: token,
+    // Miniflare's local-only header supplies deterministic request.cf metadata.
+    headers: {
+      "CF-Connecting-IP": "192.0.2.10",
+      "MF-CF-Blob": JSON.stringify({ country: "JP", city: "Tokyo" }),
+    },
   });
   assert.equal(accepted.status, 200);
   assert.equal((await accepted.json()).accepted, true);
@@ -468,6 +474,7 @@ try {
           method: "POST",
           body: sample,
           bearer: token,
+          headers: { "CF-Connecting-IP": "198.51.100.10" },
         })
       ).json()
     ).accepted,
@@ -480,6 +487,7 @@ try {
           method: "POST",
           body: { ...sample, collectedAt: now - 60 },
           bearer: token,
+          headers: { "CF-Connecting-IP": "198.51.100.10" },
         })
       ).json()
     ).accepted,
@@ -487,6 +495,20 @@ try {
   );
   const overview = await (await request("/api/overview", { cookie })).json();
   assert.equal(overview.servers.length, 2);
+  const connection = overview.servers.find(
+    (row) => row.id === server.id,
+  ).network;
+  assert.equal(
+    connection.ip,
+    "192.0.2.10",
+    "Duplicate and stale reports must not replace connection metadata",
+  );
+  assert.equal(connection.country, "JP");
+  assert.equal(connection.city, "Tokyo");
+  assert.equal(
+    overview.servers.find((row) => row.id === other.id).network,
+    null,
+  );
   assert.equal(
     overview.servers.find((row) => row.id === server.id).report.cpu
       .usagePercent,
@@ -498,6 +520,27 @@ try {
   );
   assert(!JSON.stringify(overview).includes(token));
   assert(!JSON.stringify(overview).includes(codeOf(server)));
+  const moved = await request("/api/ingest", {
+    method: "POST",
+    body: { ...sample, collectedAt: now + 1 },
+    bearer: token,
+    headers: {
+      "CF-Connecting-IP": "2001:db8::10",
+      "MF-CF-Blob": JSON.stringify({ country: "SG", city: "Singapore" }),
+    },
+  });
+  assert.equal((await moved.json()).accepted, true);
+  const movedOverview = await (
+    await request("/api/overview", { cookie })
+  ).json();
+  assert.equal(
+    movedOverview.servers.find((row) => row.id === server.id).network.ip,
+    "2001:db8::10",
+  );
+  assert.equal(
+    movedOverview.servers.find((row) => row.id === server.id).network.city,
+    "Singapore",
+  );
   const history = await (
     await request(`/api/servers/${server.id}/history?range=1h`, { cookie })
   ).json();
@@ -701,7 +744,7 @@ try {
     { mode: 0o600 },
   );
   console.log(
-    "Integration passed: empty instance, protected setup, sessions, server management, enrollment retry/expiry/isolation, Python bootstrap, metrics/history, revocation, password rotation, rate limits and versioned installer assets.",
+    "Integration passed: empty instance, protected setup, sessions, server management, enrollment retry/expiry/isolation, Python bootstrap, metrics/history, connection IP persistence/updates, revocation, password rotation, rate limits and versioned installer assets.",
   );
 } finally {
   child.kill("SIGTERM");

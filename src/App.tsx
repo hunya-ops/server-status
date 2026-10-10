@@ -40,6 +40,8 @@ import {
 
 import { api, ApiError } from "./api";
 import { ServerManager, SettingsDialog } from "./Management";
+import { ServerNetwork } from "./ServerNetwork";
+import { locationName } from "../shared/location";
 const BrandContext = createContext("Status");
 const WarningContext = createContext(90);
 
@@ -268,6 +270,7 @@ function ServerCard({
       <p className="server-meta">
         {report ? `${report.os} · ${report.cpu.cores} 核` : "—"}
       </p>
+      <ServerNetwork server={server} />
       <div className="card-metrics">
         <Meter
           label="CPU"
@@ -589,6 +592,7 @@ function Detail({
           </span>
           <span>最后上报 {age(server.lastSeen, now)}</span>
         </div>
+        <ServerNetwork server={server} />
         <div className="detail-overview">
           <Meter
             label="CPU"
@@ -790,7 +794,7 @@ function Dashboard({
     .filter(
       (server) =>
         (!search ||
-          `${server.name} ${server.report?.os || ""}`
+          `${server.name} ${server.report?.os || ""} ${server.network?.ip || ""} ${server.network?.country || ""} ${locationName(server.network)}`
             .toLowerCase()
             .includes(search.toLowerCase())) &&
         (filter === "all" ||
@@ -1000,7 +1004,7 @@ function Dashboard({
                 <Search size={15} />
                 <input
                   aria-label="搜索服务器"
-                  placeholder="搜索服务器"
+                  placeholder="搜索名称、IP、位置"
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
                 />
@@ -1070,6 +1074,7 @@ function Dashboard({
             <div className="server-table">
               <div className="table-head">
                 <span>服务器</span>
+                <span>IP / 位置</span>
                 <span>状态</span>
                 <span>CPU</span>
                 <span>内存</span>
@@ -1086,6 +1091,7 @@ function Dashboard({
                     <Server size={17} />
                     <strong>{server.name}</strong>
                   </span>
+                  <ServerNetwork server={server} />
                   <span>
                     <Badge state={serverState(server, now)} />
                   </span>

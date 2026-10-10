@@ -19,6 +19,7 @@ import {
   enroll,
 } from "./management";
 import { validateReport } from "./validation";
+import { requestNetwork } from "./network";
 import { maxDiskUsage, type ServerSnapshot } from "../shared/types";
 
 interface Env extends AuthEnv {
@@ -50,12 +51,22 @@ async function ingest(request: Request, env: Env, now: number) {
   )
     return json({ error: "Unauthorized" }, 401);
   const minute = Math.floor(report.collectedAt / 60) * 60;
+  const network = requestNetwork(request);
   const results = await env.DB.batch([
     env.DB.prepare(
-      `INSERT INTO snapshots (server_id, collected_at, received_at, payload) VALUES (?, ?, ?, ?)
-      ON CONFLICT(server_id) DO UPDATE SET collected_at = excluded.collected_at, received_at = excluded.received_at, payload = excluded.payload
+      `INSERT INTO snapshots (server_id, collected_at, received_at, payload, ip_address, country, city) VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(server_id) DO UPDATE SET collected_at = excluded.collected_at, received_at = excluded.received_at, payload = excluded.payload,
+      ip_address = excluded.ip_address, country = excluded.country, city = excluded.city
       WHERE excluded.collected_at > snapshots.collected_at`,
-    ).bind(report.serverId, report.collectedAt, now, JSON.stringify(report)),
+    ).bind(
+      report.serverId,
+      report.collectedAt,
+      now,
+      JSON.stringify(report),
+      network?.ip ?? null,
+      network?.country ?? null,
+      network?.city ?? null,
+    ),
     env.DB.prepare(
       `INSERT INTO metrics (server_id, minute, cpu, memory, disk)
       SELECT ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM snapshots WHERE server_id = ? AND collected_at = ?)
@@ -80,7 +91,7 @@ async function ingest(request: Request, env: Env, now: number) {
 
 async function overview(env: Env, now: number) {
   const result = await env.DB.prepare(
-    `SELECT s.id, s.name, s.enabled, s.interval_seconds, s.sort_order, p.received_at, p.payload FROM servers s
+    `SELECT s.id, s.name, s.enabled, s.interval_seconds, s.sort_order, p.received_at, p.payload, p.ip_address, p.country, p.city FROM servers s
     LEFT JOIN snapshots p ON p.server_id = s.id ORDER BY s.sort_order`,
   ).all<{
     id: string;
@@ -90,6 +101,9 @@ async function overview(env: Env, now: number) {
     sort_order: number;
     received_at: number | null;
     payload: string | null;
+    ip_address: string | null;
+    country: string | null;
+    city: string | null;
   }>();
   const preferences = await settings(env);
   const servers: ServerSnapshot[] = result.results.map((row) => ({
@@ -101,6 +115,9 @@ async function overview(env: Env, now: number) {
     warningPercent: preferences.warningPercent,
     lastSeen: row.received_at,
     report: row.payload ? JSON.parse(row.payload) : null,
+    network: row.ip_address
+      ? { ip: row.ip_address, country: row.country, city: row.city }
+      : null,
   }));
   return json({ servers, settings: preferences, generatedAt: now });
 }
