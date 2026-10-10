@@ -3,7 +3,7 @@
   "name": "status-monitor",
   "main": "worker/index.ts",
   "compatibility_date": "2026-10-10",
-  "workers_dev": false,
+  "workers_dev": true,
   "preview_urls": false,
   "routes": [],
   "assets": {

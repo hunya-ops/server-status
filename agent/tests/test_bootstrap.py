@@ -13,9 +13,10 @@ spec.loader.exec_module(bootstrap)
 
 
 class BootstrapTests(unittest.TestCase):
-    def test_only_accepts_custom_https_origins(self):
+    def test_accepts_default_and_custom_https_origins(self):
         self.assertEqual(bootstrap.origin("https://status.example.com/"), "https://status.example.com")
-        for value in ("http://status.example.com", "https://name.workers.dev", "https://user:pass@status.example.com", "https://status.example.com/path", "https://status.example.com?token=secret"):
+        self.assertEqual(bootstrap.origin("https://status-monitor.example-account.workers.dev/"), "https://status-monitor.example-account.workers.dev")
+        for value in ("http://status.example.com", "http://status-monitor.example-account.workers.dev", "https://user:pass@status.example.com", "https://status.example.com/path", "https://status.example.com?token=secret"):
             with self.assertRaises(ValueError):
                 bootstrap.origin(value)
 
@@ -24,12 +25,12 @@ class BootstrapTests(unittest.TestCase):
             pending, output = pathlib.Path(directory)/"pending.json", pathlib.Path(directory)/"config.json"
             with patch.object(bootstrap.urllib.request.OpenerDirector, "open", side_effect=urllib.error.URLError("lost response")):
                 with self.assertRaises(urllib.error.URLError):
-                    bootstrap.enroll("https://status.example.com", "test-server", "a"*64, pending, output)
+                    bootstrap.enroll("https://status-monitor.example-account.workers.dev", "test-server", "a"*64, pending, output)
             token = json.loads(pending.read_text())["token"]
             self.assertFalse(output.exists())
             response = io.BytesIO(json.dumps({"ok":True, "serverId":"test-server", "interval":60}).encode())
             with patch.object(bootstrap.urllib.request.OpenerDirector, "open", return_value=response) as opened:
-                bootstrap.enroll("https://status.example.com", "test-server", "a"*64, pending, output)
+                bootstrap.enroll("https://status-monitor.example-account.workers.dev", "test-server", "a"*64, pending, output)
             self.assertEqual(json.loads(output.read_text())["token"], token)
             self.assertEqual(json.loads(opened.call_args.args[0].data)["token"], token)
             self.assertEqual(output.stat().st_mode & 0o777, 0o600)

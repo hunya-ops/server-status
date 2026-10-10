@@ -11,7 +11,7 @@ main() {
   if [ "$(id -u)" != 0 ]; then
     command -v sudo >/dev/null 2>&1 || fail 'Run this installer as root, or install sudo'
     elevation_url=$(find_url "$@")
-    case "$elevation_url" in https://*) ;; *) fail 'Specify --url with the HTTPS custom domain of your panel';; esac
+    case "$elevation_url" in https://*) ;; *) fail 'Specify --url with the HTTPS URL of your panel';; esac
     self_script=$(mktemp)
     trap 'rm -f "$self_script"' EXIT
     curl -fsS --proto '=https' --max-time 30 "$elevation_url/agent/install.sh" -o "$self_script"
@@ -48,7 +48,7 @@ main() {
     else fail 'Install Python 3, curl and CA certificates, then retry'; fi
   fi
   umask 077
-  [ -n "$panel_url" ] || fail 'Specify --url with the HTTPS custom domain of your panel'
+  [ -n "$panel_url" ] || fail 'Specify --url with the HTTPS URL of your panel'
   if [ "$action" = update ]; then
     [ -f /etc/status-agent/config.json ] || fail 'No installed agent was found'
   else
@@ -57,8 +57,8 @@ main() {
   panel_url=$(python3 - "$panel_url" <<'PY'
 import sys, urllib.parse
 u=urllib.parse.urlsplit(sys.argv[1])
-if u.scheme != 'https' or not u.hostname or u.username or u.password or u.query or u.fragment or u.path not in ('','/') or u.hostname.endswith('.workers.dev'):
-    raise SystemExit('Use the HTTPS custom domain of your panel')
+if u.scheme != 'https' or not u.hostname or u.username or u.password or u.query or u.fragment or u.path not in ('','/'):
+    raise SystemExit('Use the HTTPS URL of your panel')
 print(u.scheme+'://'+u.netloc)
 PY
   )

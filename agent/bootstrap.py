@@ -22,8 +22,6 @@ def origin(value, allow_local_http=False):
     local = allow_local_http and url.scheme == "http" and url.hostname in ("127.0.0.1", "localhost")
     if (url.scheme != "https" and not local) or not url.hostname or url.username or url.password or url.query or url.fragment or url.path not in ("", "/"):
         raise ValueError("Panel URL must be an HTTPS origin")
-    if url.hostname.endswith(".workers.dev"):
-        raise ValueError("Use your panel's custom domain")
     return f"{url.scheme}://{url.netloc}"
 
 

@@ -41,7 +41,12 @@ export async function deploymentConfig(
       throw new Error("Set a valid custom domain");
     config.routes = [{ pattern: domain.toLowerCase(), custom_domain: true }];
   }
-  config.workers_dev = false;
+  const workersDev = environment.STATUS_WORKERS_DEV ?? instance.workersDev;
+  if (workersDev !== undefined) {
+    if (![true, false, "true", "false"].includes(workersDev))
+      throw new Error("STATUS_WORKERS_DEV must be true or false");
+    config.workers_dev = workersDev === true || workersDev === "true";
+  }
   config.preview_urls = false;
   // Generated configs live outside the root; resolve these paths explicitly.
   config.main = resolve(config.main);

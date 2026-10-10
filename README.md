@@ -9,12 +9,26 @@
 1. 点击上方按钮，登录 Cloudflare 并授权 GitHub/GitLab。向导会复制公开模板到你的账号，创建 Worker 和 D1，并连接 Workers Builds。它创建的是新的仓库；如果希望保留 GitHub Fork 关系，先 Fork，再在 Cloudflare 连接自己的仓库。
 2. 设置运行时 Secret `SETUP_KEY`：使用自己生成的、至少 32 字符的随机密钥，不使用示例值。它用于首次初始化和会话签名，初始化后仍须保留。Cloudflare API Token 不属于面板运行时配置。
 3. 确认构建命令 `npm run build`，部署命令 `npm run deploy`，生产分支 `main`。部署自动执行 D1 迁移，新数据库不会添加示例服务器。
-4. 使用自己的域名。可在复制后的 `wrangler.jsonc` 中把 `vars.SITE_DOMAIN` 设为账号下的域名，例如 `status.example.com`，并推送到 `main`；部署脚本会生成 Custom Domain 绑定。也可部署后在 Worker 的 Settings → Domains & Routes 中添加 Custom Domain。模板禁用默认域名和预览地址；域名绑定完成前没有公开访问地址。
-5. 访问自己的域名，填写 `SETUP_KEY` 并设置访问密码（至少 12 个字符）。初始化只能完成一次，之后使用访问密码登录。
+4. 部署完成后，打开 Cloudflare 提供的默认地址 `https://<Worker名称>.<账号子域名>.workers.dev`。模板默认启用此地址，无需准备自己的域名；可在 Worker 的 Settings → Domains & Routes 中查看。
+5. 访问面板，填写 `SETUP_KEY` 并设置访问密码（至少 12 个字符）。初始化只能完成一次，之后使用访问密码登录。默认域名和自定义域名均需要登录。
 
 官方按钮需要公开的源仓库，并能自动创建 D1；资源 ID 在部署者自己的副本中更新。首次部署前声明 Secrets 的示例文件为 `.dev.vars.example`。参见 [Deploy to Cloudflare 文档](https://developers.cloudflare.com/workers/platform/deploy-buttons/)。
 
 后续发布只需推送自己的部署分支，由 Workers Builds 自动部署。模板的真实部署脚本仅允许在 CI 中运行；本地检查使用 `npm run deploy:check`。
+
+### 域名与默认地址开关
+
+绑定自己的域名是可选的。在 Cloudflare 控制台进入 **Workers & Pages → 选择 Worker → Settings → Domains & Routes → Add → Custom Domain**，添加账号下的域名。也可在自己的仓库中把 `wrangler.jsonc` 的 `vars.SITE_DOMAIN` 设为 `status.example.com`，推送后由部署脚本生成绑定。绑定自定义域名后，默认地址仍可同时使用。
+
+是否启用默认域名由 `wrangler.jsonc` 的顶层 `workers_dev` 控制：
+
+```jsonc
+"workers_dev": true // 启用；设为 false 则关闭
+```
+
+修改后推送部署分支即可生效。也可在 Cloudflare 的 **Settings → Domains & Routes** 中，对 `workers.dev` 地址选择 **Enable / Disable**；通过控制台修改后，应同步修改仓库配置，否则下次自动部署会按仓库配置恢复开关。参见 [Cloudflare 默认域名文档](https://developers.cloudflare.com/workers/configuration/routing/workers-dev/)。
+
+已安装的 agent 会持续使用安装时的地址。关闭默认域名前，先将服务器 `/etc/status-agent/config.json` 中的 `endpoint` 改为新域名的 `https://status.example.com/api/ingest`，保留服务器 ID 和 token，并执行 `systemctl restart status-agent`。模板的 `preview_urls` 默认为 `false`，它与生产默认域名开关独立。
 
 ## 一键接入服务器
 
@@ -97,14 +111,15 @@ npm run test:integration
 
 已有实例的部署参数可放在 Cloudflare Build variables 中，避免在公共源码中固定任何账号和资源：
 
-| 构建变量               | 用途             |
-| ---------------------- | ---------------- |
-| `STATUS_WORKER_NAME`   | 已有 Worker 名称 |
-| `STATUS_DOMAIN`        | 自有域名         |
-| `STATUS_ACCOUNT_ID`    | Cloudflare 账号  |
-| `STATUS_DATABASE_ID`   | 已有 D1 ID       |
-| `STATUS_DATABASE_NAME` | 已有 D1 名称     |
+| 构建变量               | 用途                                     |
+| ---------------------- | ---------------------------------------- |
+| `STATUS_WORKER_NAME`   | 已有 Worker 名称                         |
+| `STATUS_DOMAIN`        | 自有域名                                 |
+| `STATUS_ACCOUNT_ID`    | Cloudflare 账号                          |
+| `STATUS_DATABASE_ID`   | 已有 D1 ID                               |
+| `STATUS_DATABASE_NAME` | 已有 D1 名称                             |
+| `STATUS_WORKERS_DEV`   | 可选，`true` / `false`；覆盖默认域名开关 |
 
-本地开发可把相同参数放入忽略提交的 `.local/deployment.json`，字段为 `name`、`domain`、`accountId`、`databaseId`、`databaseName`。这份文件不参与 GitHub 自动构建；线上构建必须使用构建变量。生成的 Wrangler 文件位于 `.wrangler/deployment.json`。
+本地开发可把相同参数放入忽略提交的 `.local/deployment.json`，字段为 `name`、`domain`、`accountId`、`databaseId`、`databaseName` 和可选布尔值 `workersDev`。这份文件不参与 GitHub 自动构建；线上构建必须使用构建变量。构建变量优先于本地实例配置；未提供覆盖值时使用 `wrangler.jsonc` 的 `workers_dev`。生成的 Wrangler 文件位于 `.wrangler/deployment.json`。
 
 部署命令始终通过 `DB` 绑定执行迁移，不依赖数据库名称。Secrets 保存在运行时配置中，构建变量用于部署资源配置，两者用途不同。
