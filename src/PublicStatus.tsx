@@ -12,7 +12,7 @@ import "./public.css";
 
 const stateNames = { online: "在线", offline: "上报中断", pending: "等待上报" };
 const percent = (value: number | null) =>
-  value === null ? "—" : `${value.toFixed(3)}%`;
+  value === null ? "—" : `${value.toFixed(2)}%`;
 const dayState = (value: number | null) =>
   value === null
     ? "unknown"
