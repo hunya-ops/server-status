@@ -73,14 +73,6 @@
 .public-summary.up h1 {
   color: #16884a;
 }
-.public-summary p {
-  margin-top: 8px;
-  color: var(--public-muted);
-  font-size: 12px;
-}
-.public-summary p:empty {
-  display: none;
-}
 .public-refresh {
   margin-left: auto;
   display: grid;
@@ -389,9 +381,6 @@
   .public-summary h1 {
     font-size: 20px;
     letter-spacing: -0.5px;
-  }
-  .public-summary p {
-    font-size: 10px;
   }
   .public-refresh {
     width: 30px;

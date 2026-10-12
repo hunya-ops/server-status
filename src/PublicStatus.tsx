@@ -22,17 +22,6 @@ const dayState = (value: number | null) =>
         ? "down"
         : "partial";
 
-function duration(value: number | null): string {
-  if (value === null) return "尚未上报";
-  const days = Math.floor(value / 86400);
-  const hours = Math.floor((value % 86400) / 3600);
-  return days
-    ? `${days} 天 ${hours} 小时`
-    : hours
-      ? `${hours} 小时 ${Math.floor((value % 3600) / 60)} 分钟`
-      : `${Math.floor(value / 60)} 分钟`;
-}
-
 function dayLabel(day: UptimeDay): string {
   return `${day.date} · ${day.uptimePercent === null ? "暂无记录" : `Uptime ${percent(day.uptimePercent)}`}`;
 }
@@ -182,14 +171,7 @@ export default function PublicStatus() {
         <main>
           <section className={`public-summary ${overall}`} aria-live="polite">
             <span className="public-summary-dot" aria-hidden="true" />
-            <div>
-              <h1>{heading}</h1>
-              <p>
-                {data && !error
-                  ? `${servers.length} 个节点 · 每 30 秒更新`
-                  : ""}
-              </p>
-            </div>
+            <h1>{heading}</h1>
             <button
               className="public-refresh"
               aria-label="刷新状态"
@@ -252,11 +234,6 @@ export default function PublicStatus() {
                         </span>
                         <div>
                           <h3>{label}</h3>
-                          <p>
-                            {server.uptimeSeconds === null
-                              ? "尚未上报"
-                              : `${server.state === "offline" ? "上次运行" : "连续运行"} ${duration(server.uptimeSeconds)}`}
-                          </p>
                           <p className="public-specs" aria-label="硬件配置">
                             <span>{server.cpuCores ?? "—"} 核</span>
                             <span>
