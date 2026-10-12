@@ -174,6 +174,21 @@ export async function updateServer(
   return json({ ok: true });
 }
 
+export async function renameServer(
+  request: Request,
+  env: AdminEnv,
+  id: string,
+): Promise<Response> {
+  await serverExists(env, id);
+  const body = await readJSON(request);
+  name(body.name);
+  const renamed = body.name.trim();
+  await env.DB.prepare("UPDATE servers SET name = ? WHERE id = ?")
+    .bind(renamed, id)
+    .run();
+  return json({ name: renamed });
+}
+
 export async function revokeServer(
   env: AdminEnv,
   id: string,

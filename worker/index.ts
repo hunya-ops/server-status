@@ -14,6 +14,7 @@ import {
   createServer,
   installCommand,
   updateServer,
+  renameServer,
   revokeServer,
   deleteServer,
   enroll,
@@ -195,13 +196,15 @@ export default {
       if (request.method === "POST" && url.pathname === "/api/servers")
         return await createServer(request, env, now);
       const managed = url.pathname.match(
-        /^\/api\/servers\/([a-z0-9-]{1,64})(?:\/(install|revoke))?$/,
+        /^\/api\/servers\/([a-z0-9-]{1,64})(?:\/(install|revoke|name))?$/,
       );
       if (managed) {
         if (request.method === "POST" && managed[2] === "install")
           return await installCommand(request, env, managed[1], now);
         if (request.method === "POST" && managed[2] === "revoke")
           return await revokeServer(env, managed[1]);
+        if (request.method === "PATCH" && managed[2] === "name")
+          return await renameServer(request, env, managed[1]);
         if (request.method === "PATCH" && !managed[2])
           return await updateServer(request, env, managed[1]);
         if (request.method === "DELETE" && !managed[2])

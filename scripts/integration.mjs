@@ -590,6 +590,123 @@ try {
   );
   assert(!JSON.stringify(overview).includes(token));
   assert(!JSON.stringify(overview).includes(codeOf(server)));
+  // Renaming is private and updates only the name, leaving the public nodes,
+  // collection settings, credentials and metric history intact.
+  const renamePath = `/api/servers/${server.id}/name`;
+  for (const authentication of [{}, { bearer: token }]) {
+    assert.equal(
+      (
+        await request(renamePath, {
+          method: "PATCH",
+          body: { name: "Unauthorized rename" },
+          ...authentication,
+        })
+      ).status,
+      401,
+    );
+  }
+  assert.equal(
+    (
+      await request(renamePath, {
+        method: "PATCH",
+        cookie,
+        body: { name: "Cross-origin rename" },
+        from: "https://other.example",
+      })
+    ).status,
+    403,
+  );
+  assert.equal(
+    (
+      await request("/api/servers/not-found/name", {
+        method: "PATCH",
+        cookie,
+        body: { name: "Missing server" },
+      })
+    ).status,
+    404,
+  );
+  for (const name of [
+    undefined,
+    null,
+    123,
+    "",
+    "   ",
+    "x".repeat(81),
+    "bad\nname",
+  ]) {
+    assert.equal(
+      (
+        await request(renamePath, {
+          method: "PATCH",
+          cookie,
+          body: { name },
+        })
+      ).status,
+      400,
+    );
+  }
+  const beforeRename = (
+    await (await request("/api/overview", { cookie })).json()
+  ).servers.find((row) => row.id === server.id);
+  const beforeHistory = (
+    await (
+      await request(`/api/servers/${server.id}/history?range=1h`, { cookie })
+    ).json()
+  ).points;
+  assert.equal(
+    (
+      await request(renamePath, {
+        method: "PATCH",
+        cookie,
+        body: { name: "x".repeat(80) },
+      })
+    ).status,
+    200,
+  );
+  const privateName = "东京 · 应用 VPS";
+  const renamed = await request(renamePath, {
+    method: "PATCH",
+    cookie,
+    body: {
+      name: `  ${privateName}  `,
+      enabled: false,
+      intervalSeconds: 3600,
+      sortOrder: 999,
+    },
+  });
+  assert.equal(renamed.status, 200);
+  assert.deepEqual(await renamed.json(), { name: privateName });
+  const afterRename = (
+    await (await request("/api/overview", { cookie })).json()
+  ).servers.find((row) => row.id === server.id);
+  assert.deepEqual(afterRename, { ...beforeRename, name: privateName });
+  assert.deepEqual(
+    (
+      await (
+        await request(`/api/servers/${server.id}/history?range=1h`, { cookie })
+      ).json()
+    ).points,
+    beforeHistory,
+  );
+  const renamedPublic = await (await request("/api/public/uptime")).json();
+  // Uptime percentages advance with wall time; compare the remaining fields
+  // and node order directly, and check the public field allowlist again.
+  const stablePublic = ({ uptimePercent, days, ...fields }) => ({
+    ...fields,
+    dates: days.map((day) => day.date),
+  });
+  assert.deepEqual(
+    renamedPublic.servers.map(stablePublic),
+    publicStatus.servers.map(stablePublic),
+  );
+  for (let index = 0; index < renamedPublic.servers.length; index++) {
+    assert.deepEqual(
+      Object.keys(renamedPublic.servers[index]).sort(),
+      Object.keys(publicStatus.servers[index]).sort(),
+    );
+  }
+  assert(!JSON.stringify(renamedPublic).includes(privateName));
   const moved = await request("/api/ingest", {
     method: "POST",
     body: { ...sample, collectedAt: now + 1 },

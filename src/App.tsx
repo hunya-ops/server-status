@@ -25,6 +25,7 @@ import {
   Server,
   X,
   Plus,
+  Pencil,
   Settings as SettingsIcon,
 } from "lucide-react";
 import {
@@ -39,7 +40,11 @@ import {
 } from "../shared/types";
 
 import { api, ApiError } from "./api";
-import { ServerManager, SettingsDialog } from "./Management";
+import {
+  RenameServerDialog,
+  ServerManager,
+  SettingsDialog,
+} from "./Management";
 import { ServerNetwork } from "./ServerNetwork";
 import { locationName } from "../shared/location";
 const BrandContext = createContext("Status");
@@ -476,12 +481,14 @@ function Detail({
   onClose,
   onUnauthorized,
   onManage,
+  onRename,
 }: {
   server: ServerSnapshot;
   now: number;
   onClose: () => void;
   onUnauthorized: () => void;
   onManage: () => void;
+  onRename: () => void;
 }) {
   const [range, setRange] = useState<"1h" | "24h" | "7d">("24h");
   const [history, setHistory] = useState<{
@@ -570,7 +577,14 @@ function Detail({
           <div>
             <span className="eyebrow">服务器指标</span>
             <h2 id="detail-title">
-              {server.name}
+              <span className="detail-name">{server.name}</span>
+              <button
+                className="secondary-button rename-server-button"
+                onClick={onRename}
+              >
+                <Pencil size={14} />
+                重命名
+              </button>
               <Badge state={serverState(server, now)} />
             </h2>
           </div>
@@ -741,6 +755,7 @@ function Dashboard({
     undefined,
   );
   const [showSettings, setShowSettings] = useState(false);
+  const [renaming, setRenaming] = useState<ServerSnapshot | null>(null);
   const [data, setData] = useState<Overview | null>(null);
   const [error, setError] = useState("");
   const [refreshing, setRefreshing] = useState(false);
@@ -1126,16 +1141,37 @@ function Dashboard({
           </footer>
         </div>
       </main>
-      {selectedServer && (
+      {selectedServer && !renaming && (
         <Detail
           server={selectedServer}
           now={now}
           onClose={() => setSelected(null)}
           onUnauthorized={onUnauthorized}
+          onRename={() => setRenaming(selectedServer)}
           onManage={() => {
             setManaging(selectedServer);
             setSelected(null);
           }}
+        />
+      )}
+      {renaming && (
+        <RenameServerDialog
+          server={renaming}
+          onClose={() => setRenaming(null)}
+          onSaved={(name) => {
+            setData(
+              (current) =>
+                current && {
+                  ...current,
+                  servers: current.servers.map((server) =>
+                    server.id === renaming.id ? { ...server, name } : server,
+                  ),
+                },
+            );
+            setRenaming(null);
+            void refresh();
+          }}
+          onUnauthorized={onUnauthorized}
         />
       )}
       {managing !== undefined && (

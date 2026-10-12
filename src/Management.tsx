@@ -84,6 +84,86 @@ interface Installation {
   sortOrder?: number;
 }
 
+export function RenameServerDialog({
+  server,
+  onClose,
+  onSaved,
+  onUnauthorized,
+}: {
+  server: ServerSnapshot;
+  onClose: () => void;
+  onSaved: (name: string) => void;
+  onUnauthorized: () => void;
+}) {
+  const [name, setName] = useState(server.name);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const input = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    input.current?.focus();
+    input.current?.select();
+  }, []);
+  async function save(event: FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      const result = await api<{ name: string }>(
+        `/api/servers/${server.id}/name`,
+        { method: "PATCH", body: JSON.stringify({ name }) },
+      );
+      onSaved(result.name);
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) onUnauthorized();
+      else setError(error instanceof Error ? error.message : "保存失败");
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <Dialog title="重命名 VPS" onClose={() => !busy && onClose()}>
+      <form className="management-form" onSubmit={save}>
+        <label>
+          VPS 名称
+          <input
+            ref={input}
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            required
+            maxLength={80}
+            disabled={busy}
+            aria-describedby="rename-note"
+          />
+        </label>
+        <p className="field-note" id="rename-note">
+          仅在后台显示
+        </p>
+        {error && (
+          <p className="form-error" role="alert">
+            {error}
+          </p>
+        )}
+        <div className="form-actions">
+          <button
+            className="primary-button"
+            disabled={busy || !name.trim() || name.trim() === server.name}
+          >
+            {busy ? <LoaderCircle size={16} className="spin" /> : "保存"}
+          </button>
+          <button
+            type="button"
+            className="secondary-button"
+            disabled={busy}
+            onClick={onClose}
+          >
+            取消
+          </button>
+        </div>
+      </form>
+    </Dialog>
+  );
+}
+
 export function ServerManager({
   server,
   onClose,
@@ -160,7 +240,7 @@ export function ServerManager({
     <Dialog title={id ? "管理服务器" : "添加服务器"} onClose={onClose}>
       <form className="management-form" onSubmit={save}>
         <label>
-          名称
+          VPS 名称
           <input
             value={name}
             onChange={(event) => setName(event.target.value)}

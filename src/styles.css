@@ -755,6 +755,17 @@ a {
   letter-spacing: -0.4px;
   margin-top: 7px;
 }
+.detail-top > div {
+  min-width: 0;
+}
+.detail-name {
+  overflow-wrap: anywhere;
+}
+.rename-server-button {
+  padding: 5px 8px;
+  font-weight: 400;
+  letter-spacing: normal;
+}
 .detail-facts {
   display: flex;
   gap: 16px;
