@@ -37,6 +37,14 @@ function dayLabel(day: UptimeDay): string {
   return `${day.date} · ${day.uptimePercent === null ? "暂无记录" : `Uptime ${percent(day.uptimePercent)}`}`;
 }
 
+function capacity(value: number | null): string {
+  if (value === null) return "—";
+  if (value === 0) return "0 B";
+  const unit = Math.min(4, Math.floor(Math.log(value) / Math.log(1024)));
+  const size = Number((value / 1024 ** unit).toFixed(unit < 2 ? 0 : 1));
+  return `${size} ${["B", "KB", "MB", "GB", "TB"][unit]}`;
+}
+
 function Timeline({ days, label }: { days: UptimeDay[]; label: string }) {
   const [selected, setSelected] = useState<number | null>(null);
   const tooltipId = useId();
@@ -248,6 +256,13 @@ export default function PublicStatus() {
                             {server.uptimeSeconds === null
                               ? "尚未上报"
                               : `${server.state === "offline" ? "上次运行" : "连续运行"} ${duration(server.uptimeSeconds)}`}
+                          </p>
+                          <p className="public-specs" aria-label="硬件配置">
+                            <span>{server.cpuCores ?? "—"} 核</span>
+                            <span>
+                              内存 {capacity(server.memoryTotalBytes)}
+                            </span>
+                            <span>磁盘 {capacity(server.diskTotalBytes)}</span>
                           </p>
                         </div>
                       </div>

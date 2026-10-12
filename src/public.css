@@ -203,6 +203,15 @@
   text-align: right;
   letter-spacing: -0.4px;
 }
+.public-specs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  font-variant-numeric: tabular-nums;
+}
+.public-specs span {
+  white-space: nowrap;
+}
 .public-page .public-percentage {
   background: none;
 }

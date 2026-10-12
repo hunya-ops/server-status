@@ -11,6 +11,9 @@ export interface PublicServer {
   city: string | null;
   state: "online" | "offline" | "pending";
   uptimeSeconds: number | null;
+  cpuCores: number | null;
+  memoryTotalBytes: number | null;
+  diskTotalBytes: number | null;
   uptimePercent: number | null;
   days: UptimeDay[];
 }

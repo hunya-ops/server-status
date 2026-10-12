@@ -421,6 +421,15 @@ try {
         availableBytes: 700,
         usagePercent: 30,
       },
+      {
+        mount: "/srv/private-data",
+        device: "/dev/private-volume",
+        filesystem: "ext4",
+        totalBytes: 2000,
+        usedBytes: 400,
+        availableBytes: 1600,
+        usagePercent: 20,
+      },
     ],
     uptimeSeconds: 9999,
   };
@@ -520,13 +529,19 @@ try {
   assert.deepEqual(Object.keys(publicServer).sort(), [
     "city",
     "country",
+    "cpuCores",
     "days",
+    "diskTotalBytes",
+    "memoryTotalBytes",
     "state",
     "uptimePercent",
     "uptimeSeconds",
   ]);
   assert.equal(publicServer.city, "Tokyo");
   assert.equal(publicServer.uptimeSeconds, 9999);
+  assert.equal(publicServer.cpuCores, 2);
+  assert.equal(publicServer.memoryTotalBytes, 1000);
+  assert.equal(publicServer.diskTotalBytes, 3000);
   assert.equal(publicServer.state, "online");
   assert.equal(publicServer.days.length, 90);
   assert(
@@ -537,6 +552,12 @@ try {
     "pending",
   );
   const serializedPublic = JSON.stringify(publicStatus);
+  const pendingPublic = publicStatus.servers.find(
+    (row) => row.country === null,
+  );
+  assert.equal(pendingPublic.cpuCores, null);
+  assert.equal(pendingPublic.memoryTotalBytes, null);
+  assert.equal(pendingPublic.diskTotalBytes, null);
   for (const privateValue of [
     server.id,
     other.id,
@@ -546,6 +567,8 @@ try {
     token,
     codeOf(server),
     "test-kernel",
+    "/srv/private-data",
+    "/dev/private-volume",
   ])
     assert(
       !serializedPublic.includes(privateValue),

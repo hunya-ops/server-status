@@ -16,6 +16,9 @@ interface PublicRow {
   received_at: number | null;
   interval_seconds: number;
   uptime_seconds: number | null;
+  cpu_cores: number | null;
+  memory_total_bytes: number | null;
+  disk_total_bytes: number | null;
   started_at: number | null;
 }
 
@@ -31,7 +34,11 @@ export async function publicOverview(
   const [rows, history] = await env.DB.batch([
     env.DB
       .prepare(`SELECT s.id, s.interval_seconds, p.country, p.city, p.received_at,
-      json_extract(p.payload, '$.uptimeSeconds') AS uptime_seconds, t.started_at
+      json_extract(p.payload, '$.uptimeSeconds') AS uptime_seconds,
+      json_extract(p.payload, '$.cpu.cores') AS cpu_cores,
+      json_extract(p.payload, '$.memory.totalBytes') AS memory_total_bytes,
+      (SELECT SUM(json_extract(d.value, '$.totalBytes'))
+        FROM json_each(p.payload, '$.disks') d) AS disk_total_bytes, t.started_at
       FROM servers s LEFT JOIN snapshots p ON p.server_id = s.id
       LEFT JOIN uptime_tracking t ON t.server_id = s.id
       WHERE s.enabled = 1
@@ -62,6 +69,9 @@ export async function publicOverview(
             ? "offline"
             : "online",
       uptimeSeconds: row.uptime_seconds,
+      cpuCores: row.cpu_cores,
+      memoryTotalBytes: row.memory_total_bytes,
+      diskTotalBytes: row.disk_total_bytes,
       ...uptimeHistory(row.started_at, intervals.get(row.id) ?? [], now),
     }),
   );
