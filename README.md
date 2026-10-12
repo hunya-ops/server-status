@@ -1,6 +1,6 @@
 # Server Status
 
-私人服务器监控面板，使用 Cloudflare Workers + D1。每个人独立部署自己的实例，Linux agent 通过 HTTPS 主动上报，无需开放监控端口。
+服务器监控面板，使用 Cloudflare Workers + D1。首页为公开 Uptime 页面，私人管理面板位于 `/admin`。每个人独立部署自己的实例，Linux agent 通过 HTTPS 主动上报，无需开放监控端口。
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/hunya-ops/server-status)
 
@@ -10,7 +10,7 @@
 2. 设置运行时 Secret `SETUP_KEY`：使用自己生成的、至少 32 字符的随机密钥，不使用示例值。它用于首次初始化和会话签名，初始化后仍须保留。Cloudflare API Token 不属于面板运行时配置。
 3. 确认构建命令 `npm run build`，部署命令 `npm run deploy`，生产分支 `main`。部署自动执行 D1 迁移，新数据库不会添加示例服务器。
 4. 部署完成后，打开 Cloudflare 提供的默认地址 `https://<Worker名称>.<账号子域名>.workers.dev`。模板默认启用此地址，无需准备自己的域名；可在 Worker 的 Settings → Domains & Routes 中查看。
-5. 访问面板，填写 `SETUP_KEY` 并设置访问密码（至少 12 个字符）。初始化只能完成一次，之后使用访问密码登录。默认域名和自定义域名均需要登录。
+5. 访问 `/admin`，填写 `SETUP_KEY` 并设置访问密码（至少 12 个字符）。初始化只能完成一次，之后使用访问密码登录。默认域名和自定义域名的管理面板均需要登录。
 
 官方按钮需要公开的源仓库，并能自动创建 D1；资源 ID 在部署者自己的副本中更新。首次部署前声明 Secrets 的示例文件为 `.dev.vars.example`。参见 [Deploy to Cloudflare 文档](https://developers.cloudflare.com/workers/platform/deploy-buttons/)。
 
@@ -29,7 +29,7 @@
 
 ## 一键接入服务器
 
-登录面板 → 添加服务器 → 复制安装命令 → 在目标 Linux 服务器执行。root 可直接运行，普通用户会通过 sudo 提权。
+访问 `/admin` 并登录 → 添加服务器 → 复制安装命令 → 在目标 Linux 服务器执行。root 可直接运行，普通用户会通过 sudo 提权。
 
 命令形态如下；实际域名、服务器 ID 和接入码由面板自动填写：
 
@@ -69,6 +69,9 @@ journalctl -u status-agent -n 20 --no-pager
 
 ## 指标与访问控制
 
+- `/` 公开显示已启用服务器的国家/城市、系统连续运行时长、采集状态和最近 90 天 Uptime。相同位置以序号区分，位置缺失时显示“位置未知”；停用的服务器不公开。公开接口 `/api/public/uptime` 只返回这些摘要，不返回服务器名称、内部 ID、IP、主机名、凭证或其他系统指标。
+- 公开 Uptime 按采集心跳统计：一次有效上报覆盖三倍采集间隔（至少 180 秒），连续上报合并为一段，缺失部分计为中断。按 UTC 日期展示，比例只计算首次记录以后已经过的时间；未记录日期为灰色。它反映采集持续性，不代表外部服务可达性。
+- Uptime 历史从升级后的首次有效上报开始积累，不从旧的指标反推在线记录。独立保留 90 个日历日，不受私人指标的 1–30 天保留设置影响；连续运行时长为最近一次上报的系统值。
 - CPU、核心数、系统负载、内存、真实磁盘挂载点及系统运行时间。
 - 卡片、列表和详情显示上报出口 IP、国旗和城市，支持按 IP 或位置搜索。地址和位置来自 Cloudflare 的上报请求信息，无需更新 agent 或接入第三方 IP 查询服务；下一次有效上报后自动显示。位置由 IP 估算，可能与机房所在地不同；使用 NAT 或代理时显示出口地址，城市缺失时显示国家，位置未知时明确标注。详见 [Cloudflare 请求地理信息](https://developers.cloudflare.com/workers/runtime-apis/request/#incomingrequestcfproperties)。
 - 卡片/列表、搜索、状态筛选，以及 1 小时、24 小时和 7 天历史。历史缺失处曲线断开。
@@ -99,7 +102,7 @@ npm run verify
 npm run test:integration
 ```
 
-集成测试在独立本地 D1 中验证空库安装、初始化、服务器管理、接入码、Python 登记程序、凭证隔离、指标历史、密码修改和安装包。不会访问线上数据库。
+集成测试在独立本地 D1 中验证公开 Uptime 数据隔离、首页与 `/admin` 路由、空库安装、初始化、服务器管理、接入码、Python 登记程序、凭证隔离、指标历史、密码修改和安装包。不会访问线上数据库。
 
 ## 升级已有实例
 

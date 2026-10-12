@@ -4,6 +4,8 @@ Never commit `.local/`, `.dev.vars`, `.env`, server addresses, passwords, enroll
 
 Metrics, history and management require an administrator session. Public installation assets contain no instance credentials. Enrollment codes expire after ten minutes, bind to one server and one credential, and are stored only as hashes. An identical registration retry is accepted until expiry so a lost response cannot strand an installation.
 
+The homepage is public; the administrator panel is at `/admin`. `/api/public/uptime` is an explicit public projection for enabled servers: country/city, reported system uptime, heartbeat state and daily uptime percentages. It excludes names, server IDs, IP addresses, hostnames, credentials and private metrics. Public heartbeat history starts with the first accepted report after this feature is installed and is kept separately for 90 calendar days. Missing history is never presented as successful uptime.
+
 Use HTTPS with either the default `workers.dev` domain or your own custom domain. The template enables the production default domain and disables preview URLs. All dashboard authentication applies on either domain. The agent does not forward credentials through redirects.
 
 Password hashing uses native PBKDF2-HMAC-SHA256 with 100,000 iterations, a random salt and a server-side pepper. Cloudflare Workers currently caps native PBKDF2 calls at 100,000 iterations; the salt and digest alone are insufficient to verify guesses without the runtime secret. Changing the runtime secret invalidates stored passwords as well as sessions. Keep it backed up privately. See the [upstream runtime limit](https://github.com/cloudflare/workerd/pull/7550).

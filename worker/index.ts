@@ -20,6 +20,8 @@ import {
 } from "./management";
 import { validateReport } from "./validation";
 import { requestNetwork } from "./network";
+import { publicOverview } from "./public";
+import { DAY_SECONDS, UPTIME_DAYS } from "../shared/uptime";
 import { maxDiskUsage, type ServerSnapshot } from "../shared/types";
 
 interface Env extends AuthEnv {
@@ -158,6 +160,8 @@ export default {
     const now = Math.floor(Date.now() / 1000);
     if (!url.pathname.startsWith("/api/")) return env.ASSETS.fetch(request);
     try {
+      if (request.method === "GET" && url.pathname === "/api/public/uptime")
+        return await publicOverview(env, now);
       if (request.method === "POST" && url.pathname === "/api/enroll")
         return await enroll(request, env, now);
       if (request.method === "POST" && url.pathname === "/api/setup")
@@ -234,6 +238,10 @@ export default {
       ),
       env.DB.prepare("DELETE FROM metrics WHERE minute < ?").bind(
         now - preferences.retentionDays * 86400,
+      ),
+      env.DB.prepare("DELETE FROM uptime_intervals WHERE ended_at < ?").bind(
+        Math.floor(now / DAY_SECONDS) * DAY_SECONDS -
+          (UPTIME_DAYS - 1) * DAY_SECONDS,
       ),
       env.DB.prepare("DELETE FROM login_attempts WHERE window_start < ?").bind(
         now - 86400,

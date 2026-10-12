@@ -197,6 +197,8 @@ export async function deleteServer(
     env.DB.prepare("DELETE FROM enrollment_codes WHERE server_id = ?").bind(id),
     env.DB.prepare("DELETE FROM metrics WHERE server_id = ?").bind(id),
     env.DB.prepare("DELETE FROM snapshots WHERE server_id = ?").bind(id),
+    env.DB.prepare("DELETE FROM uptime_intervals WHERE server_id = ?").bind(id),
+    env.DB.prepare("DELETE FROM uptime_tracking WHERE server_id = ?").bind(id),
     env.DB.prepare("DELETE FROM servers WHERE id = ?").bind(id),
   ]);
   return json({ ok: true });

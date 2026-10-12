@@ -134,6 +134,9 @@ try {
   assert(ready, "Local Worker did not start: " + logs);
   const session = await (await request("/api/session")).json();
   assert.equal(session.setupRequired, true);
+  const emptyPublic = await request("/api/public/uptime");
+  assert.equal(emptyPublic.status, 200);
+  assert.deepEqual((await emptyPublic.json()).servers, []);
   for (const path of [
     "/api/overview",
     "/api/settings",
@@ -505,6 +508,50 @@ try {
   );
   assert.equal(connection.country, "JP");
   assert.equal(connection.city, "Tokyo");
+  const publicResponse = await request("/api/public/uptime");
+  assert.equal(publicResponse.status, 200);
+  const publicStatus = await publicResponse.json();
+  assert.deepEqual(Object.keys(publicStatus).sort(), [
+    "generatedAt",
+    "servers",
+  ]);
+  assert.equal(publicStatus.servers.length, 2);
+  const publicServer = publicStatus.servers.find((row) => row.country === "JP");
+  assert.deepEqual(Object.keys(publicServer).sort(), [
+    "city",
+    "country",
+    "days",
+    "state",
+    "uptimePercent",
+    "uptimeSeconds",
+  ]);
+  assert.equal(publicServer.city, "Tokyo");
+  assert.equal(publicServer.uptimeSeconds, 9999);
+  assert.equal(publicServer.state, "online");
+  assert.equal(publicServer.days.length, 90);
+  assert(
+    publicServer.days.slice(0, -1).every((row) => row.uptimePercent === null),
+  );
+  assert.equal(
+    publicStatus.servers.find((row) => row.country === null).state,
+    "pending",
+  );
+  const serializedPublic = JSON.stringify(publicStatus);
+  for (const privateValue of [
+    server.id,
+    other.id,
+    "Example server",
+    "integration-server",
+    "192.0.2.10",
+    token,
+    codeOf(server),
+    "test-kernel",
+  ])
+    assert(
+      !serializedPublic.includes(privateValue),
+      "Public endpoint must omit private server details",
+    );
+  assert.equal((await request("/api/overview")).status, 401);
   assert.equal(
     overview.servers.find((row) => row.id === other.id).network,
     null,
@@ -529,7 +576,9 @@ try {
       "MF-CF-Blob": JSON.stringify({ country: "SG", city: "Singapore" }),
     },
   });
-  assert.equal((await moved.json()).accepted, true);
+  const movedResult = await moved.json();
+  assert.equal(moved.status, 200, JSON.stringify(movedResult));
+  assert.equal(movedResult.accepted, true);
   const movedOverview = await (
     await request("/api/overview", { cookie })
   ).json();
@@ -583,6 +632,11 @@ try {
       })
     ).status,
     401,
+  );
+  // Disabled nodes are absent from the public response.
+  assert.equal(
+    (await (await request("/api/public/uptime")).json()).servers.length,
+    1,
   );
   assert.equal(
     (
@@ -731,6 +785,7 @@ try {
     200,
   );
   assert.equal((await request("/")).status, 200);
+  assert.equal((await request("/admin")).status, 200);
   assert.equal((await request("/agent/install.sh")).status, 200);
   const manifest = await (await request("/agent/manifest.json")).json();
   for (const [name, expected] of Object.entries(manifest.files)) {
@@ -744,8 +799,9 @@ try {
     { mode: 0o600 },
   );
   console.log(
-    "Integration passed: empty instance, protected setup, sessions, server management, enrollment retry/expiry/isolation, Python bootstrap, metrics/history, connection IP persistence/updates, revocation, password rotation, rate limits and versioned installer assets.",
+    "Integration passed: public uptime privacy, homepage/admin routes, empty instance, protected setup, sessions, server management, enrollment retry/expiry/isolation, Python bootstrap, metrics/history, connection IP persistence/updates, revocation, password rotation, rate limits and versioned installer assets.",
   );
 } finally {
+  await writeFile(`${directory}/worker.log`, logs, { mode: 0o600 });
   child.kill("SIGTERM");
 }
