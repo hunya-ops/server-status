@@ -34,7 +34,9 @@ export async function publicOverview(
       json_extract(p.payload, '$.uptimeSeconds') AS uptime_seconds, t.started_at
       FROM servers s LEFT JOIN snapshots p ON p.server_id = s.id
       LEFT JOIN uptime_tracking t ON t.server_id = s.id
-      WHERE s.enabled = 1 ORDER BY s.sort_order, s.id`),
+      WHERE s.enabled = 1
+      ORDER BY p.country IS NULL, p.country COLLATE NOCASE,
+        p.city IS NULL, p.city COLLATE NOCASE, s.sort_order, s.id`),
     env.DB.prepare(
       `SELECT u.server_id, u.started_at, u.ended_at FROM uptime_intervals u
       JOIN servers s ON s.id = u.server_id WHERE s.enabled = 1 AND u.ended_at > ?`,
