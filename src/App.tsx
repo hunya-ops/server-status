@@ -144,11 +144,12 @@ function Login({
           <LockKeyhole size={24} />
         </div>
         <h1>{setupRequired ? "初始化面板" : "登录监控面板"}</h1>
-        <form onSubmit={submit}>
+        <form onSubmit={submit} method="post">
           {setupRequired && (
             <label>
               初始化密钥
               <input
+                name="setupKey"
                 type="password"
                 value={setupKey}
                 autoComplete="off"
@@ -160,11 +161,23 @@ function Login({
               />
             </label>
           )}
+          <label htmlFor="username">
+            用户名
+            <input
+              id="username"
+              name="username"
+              type="text"
+              autoComplete="username"
+              value="admin"
+              readOnly
+            />
+          </label>
           <label htmlFor="password">
             {setupRequired ? "设置访问密码" : "访问密码"}
           </label>
           <input
             id="password"
+            name="password"
             type="password"
             autoComplete={setupRequired ? "new-password" : "current-password"}
             autoFocus
@@ -179,6 +192,7 @@ function Login({
             <label className="repeat-password">
               确认密码
               <input
+                name="repeatPassword"
                 type="password"
                 autoComplete="new-password"
                 value={repeatPassword}

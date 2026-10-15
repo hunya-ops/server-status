@@ -10,7 +10,7 @@
 2. 设置运行时 Secret `SETUP_KEY`：使用自己生成的、至少 32 字符的随机密钥，不使用示例值。它用于首次初始化和会话签名，初始化后仍须保留。Cloudflare API Token 不属于面板运行时配置。
 3. 确认构建命令 `npm run build`，部署命令 `npm run deploy`，生产分支 `main`。部署自动执行 D1 迁移，新数据库不会添加示例服务器。
 4. 部署完成后，打开 Cloudflare 提供的默认地址 `https://<Worker名称>.<账号子域名>.workers.dev`。模板默认启用此地址，无需准备自己的域名；可在 Worker 的 Settings → Domains & Routes 中查看。
-5. 访问 `/admin`，填写 `SETUP_KEY` 并设置访问密码（至少 12 个字符）。初始化只能完成一次，之后使用访问密码登录。默认域名和自定义域名的管理面板均需要登录。
+5. 访问 `/admin`，填写 `SETUP_KEY` 并设置访问密码（至少 12 个字符）。初始化只能完成一次，之后使用访问密码登录。用户名固定为 `admin`，便于密码管理器保存和自动填充。默认域名和自定义域名的管理面板均需要登录。
 
 官方按钮需要公开的源仓库，并能自动创建 D1；资源 ID 在部署者自己的副本中更新。首次部署前声明 Secrets 的示例文件为 `.dev.vars.example`。参见 [Deploy to Cloudflare 文档](https://developers.cloudflare.com/workers/platform/deploy-buttons/)。
 

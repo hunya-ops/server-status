@@ -513,12 +513,22 @@ export function SettingsDialog({
       </form>
       <form
         className="management-form password-form"
+        method="post"
         onSubmit={(event) => void submit(event, true)}
       >
         <h3>修改密码</h3>
+        <input
+          type="text"
+          name="username"
+          autoComplete="username"
+          value="admin"
+          readOnly
+          hidden
+        />
         <label>
           当前密码
           <input
+            name="currentPassword"
             type="password"
             value={currentPassword}
             autoComplete="current-password"
@@ -530,6 +540,7 @@ export function SettingsDialog({
         <label>
           新密码
           <input
+            name="password"
             type="password"
             value={password}
             autoComplete="new-password"
