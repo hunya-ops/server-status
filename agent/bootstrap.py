@@ -53,7 +53,8 @@ def enroll(panel_url, server_id, code, pending_path, output_path, allow_local_ht
         write_config(pending_path, pending)
     if not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", pending.get("token", "")):
         raise ValueError("Invalid pending credential")
-    request = urllib.request.Request(panel_url + "/api/enroll", data=json.dumps({"serverId": server_id, "token": pending["token"]}).encode(), headers={"Content-Type": "application/json", "Authorization": "Bearer " + code}, method="POST")
+    # Use the collector's identity; Cloudflare can reject urllib's default agent.
+    request = urllib.request.Request(panel_url + "/api/enroll", data=json.dumps({"serverId": server_id, "token": pending["token"]}).encode(), headers={"Content-Type": "application/json", "Authorization": "Bearer " + code, "User-Agent": "status-agent/1.0"}, method="POST")
     try:
         with urllib.request.build_opener(NoRedirect()).open(request, timeout=20) as response:
             result = json.loads(response.read(4096))

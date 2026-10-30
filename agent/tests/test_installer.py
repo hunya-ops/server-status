@@ -50,6 +50,9 @@ class InstallerTests(unittest.TestCase):
                 self.send_response(200);self.end_headers();self.wfile.write(content)
             def do_POST(self):
                 if self.path!='/api/enroll':self.send_error(404);return
+                # Reproduce Cloudflare's rejection of urllib's default identity.
+                if self.headers.get('User-Agent', '').startswith('Python-urllib/'):
+                    self.send_error(403);return
                 body=json.loads(self.rfile.read(int(self.headers['Content-Length'])))
                 owner.registrations.append(body)
                 self.send_response(200);self.end_headers();self.wfile.write(json.dumps({'ok':True,'serverId':body['serverId'],'interval':60}).encode())
