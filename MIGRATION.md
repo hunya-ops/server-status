@@ -45,7 +45,7 @@
 
 ## Analytics Engine 配置与验收
 
-运行时需专用、限目标账号的 **Account Analytics:Read** Token，保存为 Worker Secret `AE_QUERY_TOKEN`。写入使用 `HISTORY` 绑定，不使用该 Token。不复制本机开发凭据，不向浏览器返回 Cloudflare 凭据。
+先在 Cloudflare 账号的 Analytics Engine 页面启用服务；仅创建 Token 不会开通服务，未开通时 Worker 部署返回错误码 10089。运行时需专用、限目标账号的 **Account Analytics:Read** Token，保存为 Worker Secret `AE_QUERY_TOKEN`。写入使用 `HISTORY` 绑定，不使用该 Token。不复制本机开发凭据，不向浏览器返回 Cloudflare 凭据。
 
 1. 部署脚本同时设置写入 dataset 和查询变量 `AE_DATASET`，默认由 Worker 名称生成；本实例为 `status_9ba_in_metrics`。`AE_ACCOUNT_ID` 来自部署账号。可用构建变量 `STATUS_HISTORY_DATASET` 覆盖，但启用后应保持名称稳定。
 2. 迁移 `0006` 只增加 `history_migration`。Hub 首次启动保存切换时间，重启继续使用该时间。旧 D1 仅查询切换前数据，AE 查询切换后的数据；图表边界桶重合时以 AE 为准，避免重复。

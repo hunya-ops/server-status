@@ -7,7 +7,7 @@
 ## 部署自己的面板
 
 1. 点击上方按钮，登录 Cloudflare 并授权 GitHub/GitLab。向导会复制公开模板到你的账号，创建 Worker 和 D1，并连接 Workers Builds。它创建的是新的仓库；如果希望保留 GitHub Fork 关系，先 Fork，再在 Cloudflare 连接自己的仓库。
-2. 设置运行时 Secret `SETUP_KEY`：使用自己生成的、至少 32 字符的随机密钥，不使用示例值。它用于首次初始化和会话签名，初始化后仍须保留。另建仅限部署账号、具有 Account Analytics:Read 权限的专用查询 Token，保存为运行时 Secret `AE_QUERY_TOKEN`。它只供服务端查询历史；不使用部署 Token，也不向浏览器提供。
+2. 先在 Cloudflare 账号的 Analytics Engine 页面启用服务，再设置运行时 Secrets。`SETUP_KEY` 使用自己生成的、至少 32 字符的随机密钥，不使用示例值；它用于首次初始化和会话签名，初始化后仍须保留。另建仅限部署账号、具有 Account Analytics:Read 权限的专用查询 Token，保存为 `AE_QUERY_TOKEN`。它只供服务端查询历史；不使用部署 Token，也不向浏览器提供。创建 Token 不会自动启用 Analytics Engine；若部署返回错误码 10089，先在控制台启用服务后重试构建。
 3. 确认构建命令 `npm run build`，部署命令 `npm run deploy`，生产分支 `main`。部署自动执行 D1 迁移，新数据库不会添加示例服务器。
 4. 部署前通过 `STATUS_DOMAIN` 配置自己的域名，或在 Worker 的 Settings → Domains & Routes 中绑定 Custom Domain。默认 workers.dev 与预览地址均关闭。
 5. 访问 `/admin`，填写 `SETUP_KEY` 并设置访问密码（至少 12 个字符）。初始化只能完成一次，之后使用访问密码登录。用户名固定为 `admin`，便于密码管理器保存和自动填充。管理面板需要登录。
