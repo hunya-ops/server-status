@@ -24,15 +24,30 @@ export async function deploymentConfig(
       environment.STATUS_WORKER_NAME ||
       instance.name,
     domain: environment.STATUS_DOMAIN || instance.domain,
-    accountId: environment.STATUS_ACCOUNT_ID || instance.accountId,
+    accountId:
+      environment.STATUS_ACCOUNT_ID ||
+      environment.CLOUDFLARE_ACCOUNT_ID ||
+      instance.accountId,
     databaseId: environment.STATUS_DATABASE_ID || instance.databaseId,
     databaseName: environment.STATUS_DATABASE_NAME || instance.databaseName,
+    historyDataset:
+      environment.STATUS_HISTORY_DATASET || instance.historyDataset,
   };
   if (values.name) config.name = values.name;
   if (values.accountId) config.account_id = values.accountId;
   if (values.databaseId) config.d1_databases[0].database_id = values.databaseId;
   if (values.databaseName)
     config.d1_databases[0].database_name = values.databaseName;
+  const dataset =
+    values.historyDataset || `${config.name.replaceAll("-", "_")}_metrics`;
+  if (!/^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(dataset))
+    throw new Error("Invalid Analytics Engine dataset name");
+  config.analytics_engine_datasets = [{ binding: "HISTORY", dataset }];
+  config.vars = {
+    ...config.vars,
+    AE_DATASET: dataset,
+    AE_ACCOUNT_ID: config.account_id || "00000000000000000000000000000000",
+  };
   const domain = values.domain || config.vars?.SITE_DOMAIN;
   if (domain) {
     if (

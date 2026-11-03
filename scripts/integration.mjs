@@ -28,6 +28,11 @@ const config = {
     bindings: [{ name: "REALTIME", class_name: "RealtimeHub" }],
   },
   migrations: [{ tag: "realtime-v1", new_sqlite_classes: ["RealtimeHub"] }],
+  analytics_engine_datasets: [
+    { binding: "HISTORY", dataset: "integration_metrics" },
+  ],
+  services: [{ binding: "AE_SQL", service: "history-query-fixture" }],
+  vars: { AE_ACCOUNT_ID: "0".repeat(32), AE_DATASET: "integration_metrics" },
   d1_databases: [
     {
       binding: "DB",
@@ -38,9 +43,23 @@ const config = {
   ],
 };
 await writeFile(`${directory}/wrangler.json`, JSON.stringify(config));
-await writeFile(`${directory}/.dev.vars`, `SETUP_KEY=${setupKey}\n`, {
-  mode: 0o600,
-});
+await writeFile(
+  `${directory}/analytics.json`,
+  JSON.stringify({
+    name: "history-query-fixture",
+    main: resolve("tests/fixtures/analytics-api.ts"),
+    compatibility_date: "2026-10-10",
+    workers_dev: false,
+    preview_urls: false,
+  }),
+);
+await writeFile(
+  `${directory}/.dev.vars`,
+  `SETUP_KEY=${setupKey}\nAE_QUERY_TOKEN=integration-query-token\n`,
+  {
+    mode: 0o600,
+  },
+);
 const persistence = `${directory}/state-${Date.now()}`;
 const cli = resolve("node_modules/wrangler/bin/wrangler.js");
 const probe = createServer();
@@ -91,6 +110,8 @@ let child = spawn(
     "--port",
     String(port),
     ...common,
+    "--config",
+    `${directory}/analytics.json`,
   ],
   {
     env: { ...process.env, WRANGLER_SEND_METRICS: "false", CI: "true" },
@@ -730,13 +751,14 @@ try {
     await (await request("/api/overview", { cookie })).json()
   ).servers.find((row) => row.id === server.id);
   await sql(
-    `INSERT INTO metrics (server_id, minute, cpu, memory, disk) VALUES ('${server.id}', ${Math.floor(now / 300) * 300},32,40,30);`,
+    `INSERT INTO metrics (server_id, minute, cpu, memory, disk) VALUES ('${server.id}', ${Math.floor(now / 300) * 300 - 600},12,20,30), ('${server.id}', ${Math.floor(now / 300) * 300},32,40,30);`,
   );
-  const beforeHistory = (
-    await (
-      await request(`/api/servers/${server.id}/history?range=1h`, { cookie })
-    ).json()
-  ).points;
+  const beforeHistoryResponse = await request(
+    `/api/servers/${server.id}/history?range=1h`,
+    { cookie },
+  );
+  assert.equal(beforeHistoryResponse.status, 200, "History SQL query failed");
+  const beforeHistory = (await beforeHistoryResponse.json()).points;
   assert.equal(
     (
       await request(renamePath, {
@@ -813,11 +835,15 @@ try {
     movedOverview.servers.find((row) => row.id === server.id).network.city,
     "Singapore",
   );
-  const history = await (
-    await request(`/api/servers/${server.id}/history?range=1h`, { cookie })
-  ).json();
-  assert.equal(history.points.length, 1);
-  assert.equal(history.points[0].cpu, 32);
+  const historyResponse = await request(
+    `/api/servers/${server.id}/history?range=1h`,
+    { cookie },
+  );
+  assert.equal(historyResponse.status, 200);
+  const history = await historyResponse.json();
+  assert.equal(history.points.length, 2);
+  assert.equal(history.points[0].cpu, 12);
+  assert.equal(history.points[1].cpu, 32);
   assert.equal(
     (
       await request(`/api/servers/${server.id}/history?range=invalid`, {
@@ -926,7 +952,7 @@ try {
     ]),
   );
   assert.equal(counts[0].results[0].snapshots, 0);
-  assert.equal(counts[0].results[0].metrics, 1);
+  assert.equal(counts[0].results[0].metrics, 2);
   const updated = {
     name: "Renamed server",
     enabled: false,
@@ -1069,6 +1095,8 @@ try {
       "--port",
       String(port),
       ...common,
+      "--config",
+      `${directory}/analytics.json`,
     ],
     {
       env: { ...process.env, WRANGLER_SEND_METRICS: "false", CI: "true" },
@@ -1183,10 +1211,12 @@ try {
     { mode: 0o600 },
   );
   console.log(
-    "Integration passed: realtime snapshots/deltas under 5s, WebSocket auth, concurrent agent isolation, worker restart/recovery, zero snapshot writes, five-minute history, public uptime privacy, homepage/admin routes, empty instance, protected setup, sessions, server management, enrollment retry/expiry/isolation, Python bootstrap, metrics/history, connection IP persistence/updates, revocation, password rotation, rate limits and versioned installer assets.",
+    "Integration passed: realtime snapshots/deltas under 5s, WebSocket auth, concurrent agent isolation, worker restart/recovery, zero snapshot writes, Analytics Engine SQL contract and readonly legacy history, public uptime privacy, homepage/admin routes, empty instance, protected setup, sessions, server management, enrollment retry/expiry/isolation, Python bootstrap, metrics/history, connection IP persistence/updates, revocation, password rotation, rate limits and versioned installer assets.",
   );
 } finally {
   for (const ws of sockets) ws.terminate();
-  await writeFile(`${directory}/worker.log`, logs, { mode: 0o600 });
+  const stopped = new Promise((resolve) => child.once("close", resolve));
   child.kill("SIGTERM");
+  await stopped;
+  await writeFile(`${directory}/worker.log`, logs, { mode: 0o600 });
 }

@@ -43,6 +43,9 @@
     "bindings": {
       "SETUP_KEY": {
         "description": "Required for first-time setup. Enter a unique random key of at least 32 characters; use it once on the panel to set your password. Keep it private. Do not change it after setup: it also signs sessions."
+      },
+      "AE_QUERY_TOKEN": {
+        "description": "Analytics Engine SQL query token with Account Analytics Read permission, scoped to this deployment account. Kept only in Worker Secrets; never sent to browsers."
       }
     }
   }

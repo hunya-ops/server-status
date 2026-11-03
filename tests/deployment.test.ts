@@ -13,6 +13,10 @@ describe("independent deployment configuration", () => {
     expect(config.workers_dev).toBe(false);
     expect(config.preview_urls).toBe(false);
     expect(config.d1_databases[0].binding).toBe("DB");
+    expect(config.analytics_engine_datasets).toEqual([
+      { binding: "HISTORY", dataset: "status_monitor_metrics" },
+    ]);
+    expect(config.vars.AE_DATASET).toBe("status_monitor_metrics");
   });
   it("uses build variables for an existing instance and rejects provider domains", async () => {
     const config = await deploymentConfig(
@@ -30,10 +34,34 @@ describe("independent deployment configuration", () => {
       { pattern: "status.example.com", custom_domain: true },
     ]);
     expect(config.d1_databases[0].database_name).toBe("custom-database");
+    expect(config.analytics_engine_datasets).toEqual([
+      { binding: "HISTORY", dataset: "example_worker_metrics" },
+    ]);
+    expect(config.vars.AE_ACCOUNT_ID).toBe("example-account");
     expect(config.workers_dev).toBe(false);
     await expect(
       deploymentConfig({ STATUS_DOMAIN: "example.workers.dev" }, noLocalFile),
     ).rejects.toThrow("custom domain");
+  });
+  it("keeps the dataset name consistent between the write binding and SQL reader", async () => {
+    const config = await deploymentConfig(
+      {
+        STATUS_HISTORY_DATASET: "custom_history",
+        CLOUDFLARE_ACCOUNT_ID: "build-account",
+      },
+      noLocalFile,
+    );
+    expect(config.analytics_engine_datasets[0].dataset).toBe(
+      config.vars.AE_DATASET,
+    );
+    expect(config.vars.AE_DATASET).toBe("custom_history");
+    expect(config.vars.AE_ACCOUNT_ID).toBe("build-account");
+    await expect(
+      deploymentConfig(
+        { STATUS_HISTORY_DATASET: "bad; DROP TABLE" },
+        noLocalFile,
+      ),
+    ).rejects.toThrow("dataset name");
   });
   it("supports legacy initial defaults and uses the Worker name supplied by Builds", async () => {
     const disabled = await deploymentConfig(

@@ -46,36 +46,6 @@ async function changed(
   return result;
 }
 
-async function history(url: URL, serverId: string, env: Env, now: number) {
-  const range = url.searchParams.get("range") || "24h";
-  const hours = ({ "1h": 1, "24h": 24, "7d": 168 } as Record<string, number>)[
-    range
-  ];
-  if (!hours) return json({ error: "时间范围无效" }, 400);
-  if (
-    !(await env.DB.prepare("SELECT id FROM servers WHERE id = ?")
-      .bind(serverId)
-      .first())
-  )
-    return json({ error: "服务器不存在" }, 404);
-  const step = range === "7d" ? 900 : 300;
-  const preferences = await settings(env);
-  const rows = await env.DB.prepare(
-    `SELECT CAST(minute / ? AS INTEGER) * ? AS time,
-    AVG(cpu) AS cpu, AVG(memory) AS memory, MAX(disk) AS disk
-    FROM metrics WHERE server_id = ? AND minute >= ? AND minute <= ? GROUP BY time ORDER BY time LIMIT 700`,
-  )
-    .bind(
-      step,
-      step,
-      serverId,
-      Math.max(now - hours * 3600, now - preferences.retentionDays * 86400),
-      now,
-    )
-    .all();
-  return json({ points: rows.results, step, generatedAt: now });
-}
-
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -203,7 +173,9 @@ export default {
         /^\/api\/servers\/([a-z0-9-]+)\/history$/,
       );
       if (request.method === "GET" && match)
-        return await history(url, match[1], env, now);
+        return await hub(env).fetch(
+          `https://hub/history?server=${encodeURIComponent(match[1])}&range=${encodeURIComponent(url.searchParams.get("range") ?? "24h")}`,
+        );
       return json({ error: "接口不存在" }, 404);
     } catch (error) {
       if (error instanceof HttpError)
@@ -217,13 +189,9 @@ export default {
   },
   async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
     const now = Math.floor(Date.now() / 1000);
-    const preferences = await settings(env);
     await env.DB.batch([
       env.DB.prepare("DELETE FROM enrollment_codes WHERE expires_at <= ?").bind(
         now,
-      ),
-      env.DB.prepare("DELETE FROM metrics WHERE minute < ?").bind(
-        now - preferences.retentionDays * 86400,
       ),
       env.DB.prepare("DELETE FROM uptime_intervals WHERE ended_at < ?").bind(
         Math.floor(now / DAY_SECONDS) * DAY_SECONDS -

@@ -19,6 +19,10 @@
       "migrations_dir": "migrations",
     },
   ],
+  "analytics_engine_datasets": [
+    { "binding": "HISTORY", "dataset": "status_monitor_metrics" },
+  ],
+  "vars": { "AE_DATASET": "status_monitor_metrics" },
   "durable_objects": {
     "bindings": [{ "name": "REALTIME", "class_name": "RealtimeHub" }],
   },

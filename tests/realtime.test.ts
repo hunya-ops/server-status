@@ -60,18 +60,43 @@ async function fixture() {
     getAlarm: vi.fn(async () => null),
     setAlarm: vi.fn(async () => {}),
   };
+  const waiting: Promise<unknown>[] = [];
+  const points = vi.fn();
+  const request = vi.fn(async () => Response.json({ data: [] }));
   const ctx = {
     blockConcurrencyWhile: (cb: any) => cb(),
     storage,
     getWebSockets: (tag?: string) =>
       sockets.filter((ws) => !tag || ws.deserializeAttachment().role === tag),
     setWebSocketAutoResponse: vi.fn(),
+    waitUntil: (promise: Promise<unknown>) => waiting.push(promise),
   } as unknown as DurableObjectState;
   const make = () =>
-    new RealtimeHub(ctx, { DB, REALTIME: {} as DurableObjectNamespace });
+    new RealtimeHub(ctx, {
+      DB,
+      REALTIME: {} as DurableObjectNamespace,
+      HISTORY: { writeDataPoint: points },
+      AE_DATASET: "test_history",
+      AE_ACCOUNT_ID: "0".repeat(32),
+      AE_QUERY_TOKEN: "private-query-secret",
+      AE_SQL: { fetch: request } as unknown as Fetcher,
+    });
   const hub = make();
   await hub.ready;
-  return { sql, DB, writes, hub, sockets, token, hash, make, storage };
+  return {
+    sql,
+    DB,
+    writes,
+    hub,
+    sockets,
+    token,
+    hash,
+    make,
+    storage,
+    points,
+    request,
+    waiting,
+  };
 }
 beforeEach(() => {
   vi.useFakeTimers();
@@ -202,31 +227,73 @@ describe("volatile realtime hub", () => {
     await recovered.alarm();
     expect(recovered.presence.get("alpha")!.online).toBe(0);
   });
-  it("aggregates all metrics into one five-minute row and retries failed flushes", async () => {
+  it("writes one combined AE point per closed bucket and never writes D1 metrics", async () => {
     const f = await fixture();
-    for (let t = 1000; t < 1200; t += 5) {
+    for (let t = 1000; t < 1020; t += 5) {
       vi.setSystemTime(t * 1000);
       await f.hub.accept("alpha", report("alpha", t), null, t);
     }
-    expect(f.sql.prepare("SELECT COUNT(*) AS n FROM metrics").get()!.n).toBe(0);
-    vi.setSystemTime(1201_000);
-    const original = f.DB.prepare.bind(f.DB);
-    const prepare = vi.spyOn(f.DB, "prepare").mockImplementation((query) => {
-      const statement = original(query);
-      if (query.startsWith("INSERT INTO metrics"))
-        statement.run = vi
-          .fn()
-          .mockRejectedValue(new Error("temporary D1 failure"));
-      return statement;
+    expect(f.points).not.toHaveBeenCalled();
+    vi.setSystemTime(1020_000);
+    await f.hub.alarm();
+    await Promise.all(f.waiting);
+    expect(f.points).toHaveBeenCalledExactlyOnceWith({
+      indexes: ["alpha"],
+      blobs: ["v1"],
+      doubles: [23, 25, 30, 4, 1000, 1020],
     });
-    await expect(f.hub.alarm()).rejects.toThrow("temporary D1 failure");
+    expect(f.sql.prepare("SELECT COUNT(*) AS n FROM metrics").get()!.n).toBe(0);
+    expect(f.writes.join(" ")).not.toMatch(
+      /INSERT INTO metrics|DELETE FROM metrics|snapshots/,
+    );
+  });
+  it("keeps failed AE buckets for retry while accepting new realtime samples", async () => {
+    const f = await fixture();
+    await f.hub.accept("alpha", report("alpha", 1000), null, 1000);
+    f.points.mockImplementationOnce(() => {
+      throw new Error("temporary AE failure");
+    });
+    vi.setSystemTime(1020_000);
+    await f.hub.alarm();
+    expect(f.hub.completed.get("alpha")).toHaveLength(1);
+    await f.hub.accept("alpha", report("alpha", 1021), null, 1021);
+    vi.setSystemTime(1025_000);
+    await f.hub.alarm();
+    await Promise.all(f.waiting);
+    expect(f.points).toHaveBeenCalledTimes(2);
+    expect(f.hub.completed.size).toBe(0);
     expect(f.hub.aggregates.size).toBe(1);
-    prepare.mockRestore();
+    expect(f.sql.prepare("SELECT COUNT(*) AS n FROM metrics").get()!.n).toBe(0);
+  });
+  it("never mixes samples from opposite sides of a history bucket boundary", async () => {
+    const f = await fixture();
+    await f.hub.accept("alpha", report("alpha", 1019), null, 1019);
+    const next = report("alpha", 1021);
+    next.cpu.usagePercent = 80;
+    await f.hub.accept("alpha", next, null, 1021);
+    vi.setSystemTime(1025_000);
     await f.hub.alarm();
+    expect(f.points.mock.calls[0][0].doubles[0]).toBe(23);
+    vi.setSystemTime(1050_000);
     await f.hub.alarm();
-    expect(f.sql.prepare("SELECT COUNT(*) AS n FROM metrics").get()!.n).toBe(1);
-    expect(
-      f.sql.prepare("SELECT cpu,memory,disk FROM metrics").get(),
-    ).toMatchObject({ cpu: 23, memory: 25, disk: 30 });
+    await Promise.all(f.waiting);
+    expect(f.points.mock.calls[1][0].doubles[0]).toBe(80);
+  });
+  it("does not block realtime broadcasts behind a pending SQL API request", async () => {
+    const f = await fixture();
+    let release!: (response: Response) => void;
+    f.request.mockImplementationOnce(
+      () => new Promise((resolve) => (release = resolve)),
+    );
+    const pending = f.hub.fetch(
+      new Request("https://hub/history?server=alpha&range=1h"),
+    );
+    for (let i = 0; i < 30 && !f.request.mock.calls.length; i++)
+      await Promise.resolve();
+    expect(f.request).toHaveBeenCalled();
+    await f.hub.accept("alpha", report("alpha", 1001), null, 1001);
+    expect(f.hub.latest.get("alpha")!.lastSeen).toBe(1001);
+    release(Response.json({ data: [] }));
+    expect((await pending).status).toBe(200);
   });
 });

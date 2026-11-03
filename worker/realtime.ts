@@ -1,5 +1,11 @@
 import { equal, sha256 } from "./auth";
-import { json, readBody } from "./http";
+import {
+  HistoryStore,
+  historyPeriod,
+  type HistoryEnv,
+  type Aggregate,
+} from "./history";
+import { HttpError, json, readBody } from "./http";
 import { settings } from "./management";
 import { validateReport } from "./validation";
 import {
@@ -17,7 +23,7 @@ import {
   type UptimeInterval,
 } from "../shared/uptime";
 
-export interface RealtimeEnv {
+export interface RealtimeEnv extends HistoryEnv {
   DB: D1Database;
   REALTIME: DurableObjectNamespace;
 }
@@ -49,14 +55,6 @@ interface Attachment {
   network?: ServerNetwork | null;
   expires?: number;
 }
-interface Aggregate {
-  start: number;
-  count: number;
-  cpu: number;
-  memory: number;
-  disk: number;
-}
-export const HISTORY_SECONDS = 300;
 export const hub = (env: RealtimeEnv) =>
   env.REALTIME.get(env.REALTIME.idFromName("status-v1"));
 
@@ -69,6 +67,8 @@ export class RealtimeHub implements DurableObject {
   tracking = new Map<string, number>();
   intervals = new Map<string, UptimeInterval[]>();
   aggregates = new Map<string, Aggregate>();
+  completed = new Map<string, Aggregate[]>();
+  history: HistoryStore;
   preferences!: Settings;
   recoveredAt = Date.now() / 1000;
   ready: Promise<void>;
@@ -78,8 +78,10 @@ export class RealtimeHub implements DurableObject {
     private ctx: DurableObjectState,
     private env: RealtimeEnv,
   ) {
+    this.history = new HistoryStore(env);
     this.ready = ctx.blockConcurrencyWhile(async () => {
       await this.load();
+      await this.history.initialize();
       await this.schedule();
     });
     ctx.setWebSocketAutoResponse(
@@ -122,6 +124,7 @@ export class RealtimeHub implements DurableObject {
         row,
       ]);
     this.preferences = preferences;
+    this.history.invalidate();
   }
   snapshot(c: Config): ServerSnapshot {
     const live = this.latest.get(c.id);
@@ -317,8 +320,20 @@ export class RealtimeHub implements DurableObject {
       lastSeen: now,
       network,
     });
-    const bucket = this.aggregates.get(id) ?? {
-      start: Math.floor(now / HISTORY_SECONDS) * HISTORY_SECONDS,
+    const period = historyPeriod(
+      [...this.configs.values()].filter((c) => c.enabled).length,
+    );
+    let bucket = this.aggregates.get(id);
+    if (bucket && now >= bucket.end) {
+      this.finish(id, bucket);
+      bucket = undefined;
+    }
+    bucket ??= {
+      start: Math.max(
+        this.history.migration.cutover_at,
+        Math.floor(now / period) * period,
+      ),
+      end: (Math.floor(now / period) + 1) * period,
       count: 0,
       cpu: 0,
       memory: 0,
@@ -333,6 +348,16 @@ export class RealtimeHub implements DurableObject {
     await this.schedule();
     return true;
   }
+  private finish(id: string, bucket: Aggregate) {
+    const queue = this.completed.get(id) ?? [];
+    queue.push(bucket);
+    if (queue.length > 10) {
+      queue.shift();
+      console.error("Analytics Engine history backlog truncated");
+    }
+    this.completed.set(id, queue);
+    this.aggregates.delete(id);
+  }
   async schedule() {
     const now = Date.now() / 1000;
     const active = [...this.configs.values()].some(
@@ -341,6 +366,7 @@ export class RealtimeHub implements DurableObject {
     if (
       active ||
       this.aggregates.size ||
+      this.completed.size ||
       this.ctx
         .getWebSockets()
         .some(
@@ -355,6 +381,26 @@ export class RealtimeHub implements DurableObject {
   }
   async fetch(request: Request): Promise<Response> {
     await this.ready;
+    if (new URL(request.url).pathname === "/history") {
+      const url = new URL(request.url),
+        id = url.searchParams.get("server") ?? "";
+      if (!this.configs.has(id)) return json({ error: "服务器不存在" }, 404);
+      try {
+        return json(
+          await this.history.read(
+            id,
+            url.searchParams.get("range") ?? "24h",
+            this.preferences.retentionDays,
+            this.configs.size,
+            Date.now() / 1000,
+          ),
+        );
+      } catch (error) {
+        return error instanceof HttpError
+          ? json({ error: error.message }, error.status)
+          : json({ error: "历史数据暂时无法读取" }, 503);
+      }
+    }
     return this.exclusive(async () => {
       const path = new URL(request.url).pathname,
         now = Date.now() / 1000;
@@ -364,6 +410,8 @@ export class RealtimeHub implements DurableObject {
           if (!this.configs.get(id)?.enabled) this.latest.delete(id);
         for (const [id] of this.aggregates)
           if (!this.configs.get(id)?.enabled) this.aggregates.delete(id);
+        for (const [id] of this.completed)
+          if (!this.configs.has(id)) this.completed.delete(id);
         for (const c of this.configs.values())
           if (!c.enabled && this.presence.get(c.id)?.online)
             await this.transition(c.id, false, now);
@@ -550,17 +598,25 @@ export class RealtimeHub implements DurableObject {
         if (live && now - live.lastSeen >= c.interval_seconds * 2)
           this.broadcast(c.id);
       }
-      for (const [id, b] of this.aggregates)
-        if (now >= b.start + HISTORY_SECONDS) {
-          // Phase one: one averaged row per server per five minutes. Never an
-          // upsert per sample. Retain this bucket on a failed write for retry.
-          await this.env.DB.prepare(
-            "INSERT INTO metrics (server_id, minute, cpu, memory, disk) VALUES (?, ?, ?, ?, ?) ON CONFLICT(server_id, minute) DO NOTHING",
-          )
-            .bind(id, b.start, b.cpu / b.count, b.memory / b.count, b.disk)
-            .run();
-          this.aggregates.delete(id);
+      for (const [id, bucket] of this.aggregates)
+        if (now >= bucket.end) this.finish(id, bucket);
+      let written = 0,
+        probeId: string | undefined;
+      for (const [id, queue] of this.completed) {
+        while (queue.length && written < 240) {
+          try {
+            this.history.write(id, queue[0]);
+          } catch {
+            console.error("Analytics Engine history write failed; retrying");
+            break;
+          }
+          queue.shift();
+          written++;
+          probeId = id;
         }
+        if (!queue.length) this.completed.delete(id);
+      }
+      if (probeId) this.ctx.waitUntil(this.history.verify(probeId, now));
       for (const ws of this.ctx.getWebSockets("admin"))
         if (((ws.deserializeAttachment() as Attachment).expires ?? 0) <= now)
           ws.close(4401, "Session expired");
