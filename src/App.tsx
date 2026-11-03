@@ -1,4 +1,4 @@
-import { LiveStream, applyPrivate } from "./live";
+import { LiveStream, applyPrivate, type LiveStatus } from "./live";
 import {
   createContext,
   useContext,
@@ -773,8 +773,8 @@ function Dashboard({
   const [showSettings, setShowSettings] = useState(false);
   const [renaming, setRenaming] = useState<ServerSnapshot | null>(null);
   const [data, setData] = useState<Overview | null>(null);
-  const [error, setError] = useState("");
-  const [refreshing, setRefreshing] = useState(false);
+  const [requestError, setError] = useState("");
+  const [connection, setConnection] = useState<LiveStatus>("connecting");
   const [clock, setClock] = useState(Date.now());
   const [offset, setOffset] = useState(0);
   const [search, setSearch] = useState("");
@@ -782,10 +782,11 @@ function Dashboard({
   const [view, setView] = useState<"grid" | "list">("grid");
   const [selected, setSelected] = useState<string | null>(null);
   const stream = useRef<LiveStream | null>(null);
-  const [connected, setConnected] = useState(false);
+  const refreshing = connection === "connecting" || connection === "refreshing";
+  const error =
+    requestError || (connection === "reconnecting" ? "连接中断，正在重连" : "");
   const now = clock / 1000 + offset;
   async function refresh() {
-    setRefreshing(true);
     stream.current?.restart();
   }
   useEffect(() => {
@@ -800,16 +801,11 @@ function Dashboard({
             : message.generatedAt;
         setOffset(generatedAt - Date.now() / 1000);
         setError("");
-        setRefreshing(false);
       },
-      (value) => {
-        setConnected(value);
-        if (!value) setError("连接中断，正在重连");
-      },
+      setConnection,
       onUnauthorized,
     );
     stream.current = live;
-    setRefreshing(true);
     live.start();
     const clockInterval = setInterval(() => setClock(Date.now()), 1000);
     const visible = () => {
@@ -924,7 +920,13 @@ function Dashboard({
           <div className="header-right">
             <span className="refresh-note">
               <i />
-              {connected ? "实时连接" : "重连中"}
+              {connection === "connected"
+                ? "实时连接"
+                : connection === "reconnecting"
+                  ? "重连中"
+                  : connection === "refreshing"
+                    ? "刷新中"
+                    : "连接中"}
             </span>
             <button
               className="icon-button"

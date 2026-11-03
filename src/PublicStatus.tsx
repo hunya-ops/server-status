@@ -7,7 +7,7 @@ import {
   type PublicServer,
   type UptimeDay,
 } from "../shared/uptime";
-import { LiveStream, applyPublic, stalePublic } from "./live";
+import { LiveStream, applyPublic, stalePublic, type LiveStatus } from "./live";
 import "./public.css";
 
 const stateNames = {
@@ -107,14 +107,14 @@ function location(server: PublicServer): string {
 
 export default function PublicStatus() {
   const [data, setData] = useState<PublicOverview | null>(null);
-  const [error, setError] = useState("");
-  const [refreshing, setRefreshing] = useState(false);
+  const [connection, setConnection] = useState<LiveStatus>("connecting");
   const stream = useRef<LiveStream | null>(null);
   const [clock, setClock] = useState(Date.now() / 1000);
   const [offset, setOffset] = useState(0);
-  const [connected, setConnected] = useState(false);
+  const connected = connection === "connected";
+  const refreshing = connection === "connecting" || connection === "refreshing";
+  const error = connection === "reconnecting" ? "连接中断，正在重连" : "";
   async function refresh() {
-    setRefreshing(true);
     stream.current?.restart();
   }
   useEffect(() => {
@@ -128,16 +128,10 @@ export default function PublicStatus() {
             ? message.data.generatedAt
             : message.generatedAt;
         setOffset(generatedAt - Date.now() / 1000);
-        setError("");
-        setRefreshing(false);
       },
-      (connected) => {
-        setConnected(connected);
-        if (!connected) setError("连接中断，正在重连");
-      },
+      setConnection,
     );
     stream.current = live;
-    setRefreshing(true);
     live.start();
     const timer = setInterval(() => setClock(Date.now() / 1000), 1000);
     const visible = () => {
@@ -205,7 +199,8 @@ export default function PublicStatus() {
           </section>
           {error && (
             <p className="public-error" role="alert">
-              {error}，请刷新重试{data ? "。下方为上次记录" : ""}。
+              {error}
+              {data ? "。下方为上次记录" : ""}。
             </p>
           )}
           <section className="public-history" aria-labelledby="uptime-title">
