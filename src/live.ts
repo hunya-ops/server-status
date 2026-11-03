@@ -111,8 +111,8 @@ export class LiveStream {
         );
     };
     this.heartbeat = setInterval(() => {
-      if (Date.now() - this.received > 20000) {
-        ws.close();
+      if (Date.now() - this.received >= 15000) {
+        this.restart();
         return;
       }
       if (ws.readyState === 1) ws.send("ping");

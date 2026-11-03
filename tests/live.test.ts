@@ -104,3 +104,39 @@ it("reconnects after loss, discards deltas before a fresh snapshot and releases 
   expect(unauthorized).toHaveBeenCalled();
   expect(vi.getTimerCount()).toBe(0);
 });
+
+it("keeps a healthy quiet stream alive with pongs and reconnects a silent transport", async () => {
+  vi.useFakeTimers();
+  vi.stubGlobal("location", { href: "https://status.example/" });
+  const sockets: any[] = [];
+  const make = () => {
+    const ws: any = { readyState: 1, close: vi.fn(), send: vi.fn() };
+    sockets.push(ws);
+    return ws;
+  };
+  const status = vi.fn();
+  const stream = new LiveStream(
+    "/api/public/live",
+    () => {},
+    status,
+    () => {},
+    make,
+  );
+  stream.start();
+  sockets[0].onmessage({
+    data: JSON.stringify({
+      type: "snapshot",
+      data: { generatedAt: 1000, servers: [] },
+    }),
+  });
+  for (let i = 0; i < 6; i++) {
+    await vi.advanceTimersByTimeAsync(5000);
+    sockets[0].onmessage({ data: "pong" });
+  }
+  expect(sockets).toHaveLength(1);
+  await vi.advanceTimersByTimeAsync(15000);
+  expect(sockets).toHaveLength(2);
+  expect(status).toHaveBeenLastCalledWith(false);
+  stream.stop();
+  expect(vi.getTimerCount()).toBe(0);
+});

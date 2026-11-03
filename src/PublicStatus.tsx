@@ -112,6 +112,7 @@ export default function PublicStatus() {
   const stream = useRef<LiveStream | null>(null);
   const [clock, setClock] = useState(Date.now() / 1000);
   const [offset, setOffset] = useState(0);
+  const [connected, setConnected] = useState(false);
   async function refresh() {
     setRefreshing(true);
     stream.current?.restart();
@@ -131,6 +132,7 @@ export default function PublicStatus() {
         setRefreshing(false);
       },
       (connected) => {
+        setConnected(connected);
         if (!connected) setError("连接中断，正在重连");
       },
     );
@@ -148,7 +150,10 @@ export default function PublicStatus() {
       document.removeEventListener("visibilitychange", visible);
     };
   }, []);
-  const current = stalePublic(data, clock + offset);
+  const current = stalePublic(
+    data,
+    connected ? (data?.generatedAt ?? 0) : clock + offset,
+  );
   const servers = current?.servers ?? [];
   const offline = servers.filter((server) => server.state === "offline").length;
   const pending = servers.filter((server) =>
