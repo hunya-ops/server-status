@@ -128,7 +128,7 @@ describe("server freshness", () => {
       intervalSeconds: 300,
       warningPercent: 20,
     };
-    expect(serverState(server, 1899)).toBe("warning");
+    expect(serverState(server, 1599)).toBe("warning");
     expect(serverState(server, 1901)).toBe("offline");
     expect(serverState({ ...server, enabled: false }, 1901)).toBe("disabled");
   });
@@ -152,7 +152,7 @@ describe("server freshness", () => {
           lastSeen: 1000,
           report: report("example-server", 1000),
         },
-        1180,
+        1009,
       ),
     ).toBe("online");
     expect(
@@ -163,7 +163,7 @@ describe("server freshness", () => {
           lastSeen: 1000,
           report: report("example-server", 1000),
         },
-        1181,
+        1016,
       ),
     ).toBe("offline");
     const high = report("example-server", 1000);

@@ -33,10 +33,10 @@ function interval(value: unknown): asserts value is number {
   if (
     typeof value !== "number" ||
     !Number.isInteger(value) ||
-    value < 30 ||
-    value > 3600
+    value < 2 ||
+    value > 10
   )
-    throw new HttpError(400, "采集间隔需为 30–3600 秒");
+    throw new HttpError(400, "采集间隔需为 2–10 秒");
 }
 export async function updateSettings(
   request: Request,
@@ -73,7 +73,7 @@ export async function createServer(
 ): Promise<Response> {
   const body = await readJSON(request);
   name(body.name);
-  const seconds = body.intervalSeconds ?? 60;
+  const seconds = body.intervalSeconds ?? 5;
   interval(seconds);
   const id = crypto.randomUUID();
   const code = randomToken();
@@ -214,6 +214,8 @@ export async function deleteServer(
     env.DB.prepare("DELETE FROM snapshots WHERE server_id = ?").bind(id),
     env.DB.prepare("DELETE FROM uptime_intervals WHERE server_id = ?").bind(id),
     env.DB.prepare("DELETE FROM uptime_tracking WHERE server_id = ?").bind(id),
+    env.DB.prepare("DELETE FROM monitor_events WHERE server_id = ?").bind(id),
+    env.DB.prepare("DELETE FROM monitor_presence WHERE server_id = ?").bind(id),
     env.DB.prepare("DELETE FROM servers WHERE id = ?").bind(id),
   ]);
   return json({ ok: true });

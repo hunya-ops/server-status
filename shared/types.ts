@@ -42,6 +42,8 @@ export interface ServerNetwork {
 export interface ServerSnapshot {
   id: string;
   name: string;
+  recovering?: boolean;
+  offline?: boolean;
   lastSeen: number | null;
   report: Report | null;
   network?: ServerNetwork | null;
@@ -74,17 +76,20 @@ export interface HistoryPoint {
   disk: number;
 }
 export type ServerState =
-  "online" | "warning" | "offline" | "pending" | "disabled";
-export const STALE_SECONDS = 180;
+  "online" | "warning" | "offline" | "stale" | "pending" | "disabled";
+export const STALE_SECONDS = 15;
+export const offlineSeconds = (interval = 5) =>
+  Math.max(STALE_SECONDS, interval * 3);
 
 export function serverState(server: ServerSnapshot, now: number): ServerState {
   if (server.enabled === false) return "disabled";
+  if (server.offline) return "offline";
+  if (server.recovering) return "stale";
   if (!server.report || server.lastSeen === null) return "pending";
-  if (
-    now - server.lastSeen >
-    Math.max(STALE_SECONDS, (server.intervalSeconds ?? 60) * 3)
-  )
+  if (now - server.lastSeen >= offlineSeconds(server.intervalSeconds))
     return "offline";
+  if (now - server.lastSeen >= (server.intervalSeconds ?? 5) * 2)
+    return "stale";
   const warning = server.warningPercent ?? 90;
   if (
     server.report.cpu.usagePercent >= warning ||

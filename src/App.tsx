@@ -1,3 +1,4 @@
+import { LiveStream, applyPrivate } from "./live";
 import {
   createContext,
   useContext,
@@ -76,7 +77,8 @@ function age(lastSeen: number | null, now: number): string {
 const stateNames: Record<ServerState, string> = {
   online: "在线",
   warning: "占用较高",
-  offline: "上报中断",
+  offline: "离线",
+  stale: "数据陈旧",
   pending: "等待上报",
   disabled: "已停用",
 };
@@ -779,46 +781,58 @@ function Dashboard({
   const [filter, setFilter] = useState("all");
   const [view, setView] = useState<"grid" | "list">("grid");
   const [selected, setSelected] = useState<string | null>(null);
-  const fetching = useRef(false);
+  const stream = useRef<LiveStream | null>(null);
+  const [connected, setConnected] = useState(false);
   const now = clock / 1000 + offset;
   async function refresh() {
-    if (fetching.current) return;
-    fetching.current = true;
     setRefreshing(true);
-    try {
-      const overview = await api<Overview>("/api/overview");
-      setData(overview);
-      onSettings(overview.settings);
-      setOffset(overview.generatedAt - Date.now() / 1000);
-      setError("");
-    } catch (error) {
-      if (error instanceof ApiError && error.status === 401) onUnauthorized();
-      else setError(error instanceof Error ? error.message : "无法刷新数据");
-    } finally {
-      fetching.current = false;
-      setRefreshing(false);
-    }
+    stream.current?.restart();
   }
   useEffect(() => {
-    void refresh();
-    const interval = setInterval(() => {
-      if (document.visibilityState === "visible") void refresh();
-    }, 30000);
+    const live = new LiveStream(
+      "/api/live",
+      (message) => {
+        setData((current) => applyPrivate(current, message));
+        if (message.type === "snapshot") onSettings(message.data.settings);
+        const generatedAt =
+          message.type === "snapshot"
+            ? message.data.generatedAt
+            : message.generatedAt;
+        setOffset(generatedAt - Date.now() / 1000);
+        setError("");
+        setRefreshing(false);
+      },
+      (value) => {
+        setConnected(value);
+        if (!value) setError("连接中断，正在重连");
+      },
+      onUnauthorized,
+    );
+    stream.current = live;
+    setRefreshing(true);
+    live.start();
     const clockInterval = setInterval(() => setClock(Date.now()), 1000);
     const visible = () => {
-      if (document.visibilityState === "visible") void refresh();
+      if (document.visibilityState === "visible") live.restart();
     };
     document.addEventListener("visibilitychange", visible);
     return () => {
-      clearInterval(interval);
+      live.stop();
       clearInterval(clockInterval);
       document.removeEventListener("visibilitychange", visible);
     };
   }, []);
   const servers = data?.servers || [];
-  const counts = { online: 0, warning: 0, offline: 0, pending: 0, disabled: 0 };
+  const counts = {
+    online: 0,
+    warning: 0,
+    offline: 0,
+    stale: 0,
+    pending: 0,
+    disabled: 0,
+  };
   servers.forEach((server) => counts[serverState(server, now)]++);
-  const abnormal = counts.warning + counts.offline;
+  const abnormal = counts.warning + counts.offline + counts.stale;
   const filtered = servers
     .filter(
       (server) =>
@@ -829,16 +843,28 @@ function Dashboard({
         (filter === "all" ||
           (filter === "online"
             ? serverState(server, now) === "online"
-            : ["warning", "offline"].includes(serverState(server, now)))),
+            : ["warning", "offline", "stale"].includes(
+                serverState(server, now),
+              ))),
     )
     .sort(
       (a, b) =>
-        ({ offline: 0, warning: 1, pending: 2, online: 3, disabled: 4 })[
-          serverState(a, now)
-        ] -
-        { offline: 0, warning: 1, pending: 2, online: 3, disabled: 4 }[
-          serverState(b, now)
-        ],
+        ({
+          offline: 0,
+          stale: 0,
+          warning: 1,
+          pending: 2,
+          online: 3,
+          disabled: 4,
+        })[serverState(a, now)] -
+        {
+          offline: 0,
+          stale: 0,
+          warning: 1,
+          pending: 2,
+          online: 3,
+          disabled: 4,
+        }[serverState(b, now)],
     );
   const selectedServer = servers.find((server) => server.id === selected);
   async function logout() {
@@ -897,7 +923,8 @@ function Dashboard({
           </div>
           <div className="header-right">
             <span className="refresh-note">
-              <i />每 30 秒刷新
+              <i />
+              {connected ? "实时连接" : "重连中"}
             </span>
             <button
               className="icon-button"

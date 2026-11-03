@@ -1,4 +1,4 @@
-import { equal, sameOrigin, clearCookie, sha256, type AuthEnv } from "./auth";
+import { sameOrigin, clearCookie, type AuthEnv } from "./auth";
 import {
   administrator,
   authorized,
@@ -19,110 +19,31 @@ import {
   deleteServer,
   enroll,
 } from "./management";
-import { validateReport } from "./validation";
 import { requestNetwork } from "./network";
-import { publicOverview } from "./public";
 import { DAY_SECONDS, UPTIME_DAYS } from "../shared/uptime";
-import { maxDiskUsage, type ServerSnapshot } from "../shared/types";
+import { hub, type RealtimeEnv } from "./realtime";
+export { RealtimeHub } from "./realtime";
 
-interface Env extends AuthEnv {
+interface Env extends AuthEnv, RealtimeEnv {
   DB: D1Database;
   ASSETS: Fetcher;
 }
-async function ingest(request: Request, env: Env, now: number) {
-  const authorization = request.headers.get("Authorization") || "";
-  if (!/^Bearer [A-Za-z0-9_-]{32,128}$/.test(authorization))
-    return json({ error: "Unauthorized" }, 401);
-  const raw = await readBody(request, 32768);
-  if (raw === null) return json({ error: "Payload too large" }, 413);
-  let report: unknown;
-  try {
-    report = JSON.parse(raw);
-  } catch {
-    return json({ error: "Invalid JSON" }, 400);
+async function changed(
+  response: Promise<Response>,
+  env: Env,
+  closeAdmins = false,
+) {
+  const result = await response;
+  if (result.ok) {
+    const refresh = await hub(env).fetch(
+      new Request("https://hub/refresh", {
+        method: "POST",
+        headers: { "X-Close-Admins": closeAdmins ? "1" : "0" },
+      }),
+    );
+    if (!refresh.ok) throw new Error("Realtime configuration refresh failed");
   }
-  if (!validateReport(report, now))
-    return json({ error: "Invalid metrics or timestamp" }, 400);
-  const server = await env.DB.prepare(
-    "SELECT token_hash, interval_seconds FROM servers WHERE id = ? AND enabled = 1",
-  )
-    .bind(report.serverId)
-    .first<{ token_hash: string | null; interval_seconds: number }>();
-  if (
-    !server?.token_hash ||
-    !equal(await sha256(authorization.slice(7)), server.token_hash)
-  )
-    return json({ error: "Unauthorized" }, 401);
-  const minute = Math.floor(report.collectedAt / 60) * 60;
-  const network = requestNetwork(request);
-  const results = await env.DB.batch([
-    env.DB.prepare(
-      `INSERT INTO snapshots (server_id, collected_at, received_at, payload, ip_address, country, city) VALUES (?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(server_id) DO UPDATE SET collected_at = excluded.collected_at, received_at = excluded.received_at, payload = excluded.payload,
-      ip_address = excluded.ip_address, country = excluded.country, city = excluded.city
-      WHERE excluded.collected_at > snapshots.collected_at`,
-    ).bind(
-      report.serverId,
-      report.collectedAt,
-      now,
-      JSON.stringify(report),
-      network?.ip ?? null,
-      network?.country ?? null,
-      network?.city ?? null,
-    ),
-    env.DB.prepare(
-      `INSERT INTO metrics (server_id, minute, cpu, memory, disk)
-      SELECT ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM snapshots WHERE server_id = ? AND collected_at = ?)
-      ON CONFLICT(server_id, minute) DO UPDATE SET cpu = excluded.cpu, memory = excluded.memory, disk = excluded.disk`,
-    ).bind(
-      report.serverId,
-      minute,
-      report.cpu.usagePercent,
-      report.memory.usagePercent,
-      maxDiskUsage(report),
-      report.serverId,
-      report.collectedAt,
-    ),
-  ]);
-  return json({
-    ok: true,
-    accepted: results[0].meta.changes > 0,
-    serverTime: now,
-    interval: server.interval_seconds,
-  });
-}
-
-async function overview(env: Env, now: number) {
-  const result = await env.DB.prepare(
-    `SELECT s.id, s.name, s.enabled, s.interval_seconds, s.sort_order, p.received_at, p.payload, p.ip_address, p.country, p.city FROM servers s
-    LEFT JOIN snapshots p ON p.server_id = s.id ORDER BY s.sort_order`,
-  ).all<{
-    id: string;
-    name: string;
-    enabled: number;
-    interval_seconds: number;
-    sort_order: number;
-    received_at: number | null;
-    payload: string | null;
-    ip_address: string | null;
-    country: string | null;
-    city: string | null;
-  }>();
-  const preferences = await settings(env);
-  const servers: ServerSnapshot[] = result.results.map((row) => ({
-    id: row.id,
-    name: row.name,
-    enabled: Boolean(row.enabled),
-    intervalSeconds: row.interval_seconds,
-    sortOrder: row.sort_order,
-    warningPercent: preferences.warningPercent,
-    lastSeen: row.received_at,
-    report: row.payload ? JSON.parse(row.payload) : null,
-    network: row.ip_address
-      ? { ip: row.ip_address, country: row.country, city: row.city }
-      : null,
-  }));
-  return json({ servers, settings: preferences, generatedAt: now });
+  return result;
 }
 
 async function history(url: URL, serverId: string, env: Env, now: number) {
@@ -137,7 +58,7 @@ async function history(url: URL, serverId: string, env: Env, now: number) {
       .first())
   )
     return json({ error: "服务器不存在" }, 404);
-  const step = range === "7d" ? 900 : range === "24h" ? 300 : 60;
+  const step = range === "7d" ? 900 : 300;
   const preferences = await settings(env);
   const rows = await env.DB.prepare(
     `SELECT CAST(minute / ? AS INTEGER) * ? AS time,
@@ -162,13 +83,66 @@ export default {
     if (!url.pathname.startsWith("/api/")) return env.ASSETS.fetch(request);
     try {
       if (request.method === "GET" && url.pathname === "/api/public/uptime")
-        return await publicOverview(env, now);
+        return await hub(env).fetch("https://hub/public");
       if (request.method === "POST" && url.pathname === "/api/enroll")
-        return await enroll(request, env, now);
+        return await changed(enroll(request, env, now), env);
       if (request.method === "POST" && url.pathname === "/api/setup")
         return await setup(request, env, now);
-      if (request.method === "POST" && url.pathname === "/api/ingest")
-        return await ingest(request, env, now);
+      if (request.method === "POST" && url.pathname === "/api/ingest") {
+        const authorization = request.headers.get("Authorization") ?? "";
+        if (!/^Bearer [A-Za-z0-9_-]{32,128}$/.test(authorization))
+          return json({ error: "Unauthorized" }, 401);
+        const raw = await readBody(request, 32768);
+        if (raw === null) return json({ error: "Payload too large" }, 413);
+        return await hub(env).fetch(
+          new Request("https://hub/ingest", {
+            method: "POST",
+            headers: {
+              Authorization: authorization,
+              "X-Network": JSON.stringify(requestNetwork(request)),
+            },
+            body: raw,
+          }),
+        );
+      }
+      if (
+        request.method === "GET" &&
+        ["/api/agent/connect", "/api/public/live", "/api/live"].includes(
+          url.pathname,
+        )
+      ) {
+        if (url.search)
+          return json({ error: "Query parameters are not accepted" }, 400);
+        const agent = url.pathname === "/api/agent/connect";
+        const admin = url.pathname === "/api/live";
+        if (!agent && !sameOrigin(request))
+          return json({ error: "请求来源无效" }, 403);
+        if (admin && !(await authorized(request, env, now)))
+          return json({ error: "请先登录" }, 401);
+        const headers = new Headers({
+          Upgrade: "websocket",
+          "X-Role": agent ? "agent" : admin ? "admin" : "public",
+        });
+        if (agent) {
+          headers.set(
+            "Authorization",
+            request.headers.get("Authorization") ?? "",
+          );
+          headers.set("X-Server-Id", request.headers.get("X-Server-Id") ?? "");
+          headers.set("X-Network", JSON.stringify(requestNetwork(request)));
+        }
+        if (admin) {
+          const cookie = request.headers
+            .get("Cookie")
+            ?.match(/(?:^|;\s*)status_session=v[12]\.(\d+)/);
+          headers.set("X-Expires", cookie?.[1] ?? String(now));
+        }
+        if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket")
+          return json({ error: "WebSocket required" }, 426);
+        return await hub(env).fetch(
+          new Request("https://hub/connect", { headers }),
+        );
+      }
       if (request.method === "POST" && url.pathname === "/api/login") {
         if (Number(request.headers.get("Content-Length") || 0) > 2048)
           return json({ error: "请求过大" }, 413);
@@ -188,34 +162,43 @@ export default {
       )
         return json({ error: "请求来源无效" }, 403);
       if (request.method === "POST" && url.pathname === "/api/password")
-        return await changePassword(request, env, now);
+        return await changed(changePassword(request, env, now), env, true);
       if (request.method === "GET" && url.pathname === "/api/settings")
         return json(await settings(env));
       if (request.method === "PATCH" && url.pathname === "/api/settings")
-        return await updateSettings(request, env);
+        return await changed(updateSettings(request, env), env);
       if (request.method === "POST" && url.pathname === "/api/servers")
-        return await createServer(request, env, now);
+        return await changed(createServer(request, env, now), env);
       const managed = url.pathname.match(
         /^\/api\/servers\/([a-z0-9-]{1,64})(?:\/(install|revoke|name))?$/,
       );
       if (managed) {
         if (request.method === "POST" && managed[2] === "install")
-          return await installCommand(request, env, managed[1], now);
+          return await changed(
+            installCommand(request, env, managed[1], now),
+            env,
+          );
         if (request.method === "POST" && managed[2] === "revoke")
-          return await revokeServer(env, managed[1]);
+          return await changed(revokeServer(env, managed[1]), env);
         if (request.method === "PATCH" && managed[2] === "name")
-          return await renameServer(request, env, managed[1]);
+          return await changed(renameServer(request, env, managed[1]), env);
         if (request.method === "PATCH" && !managed[2])
-          return await updateServer(request, env, managed[1]);
+          return await changed(updateServer(request, env, managed[1]), env);
         if (request.method === "DELETE" && !managed[2])
-          return await deleteServer(env, managed[1]);
+          return await changed(deleteServer(env, managed[1]), env);
       }
       if (request.method === "POST" && url.pathname === "/api/logout") {
         if (!sameOrigin(request)) return json({ error: "请求来源无效" }, 403);
-        return json({ ok: true }, 200, { "Set-Cookie": clearCookie(request) });
+        return await changed(
+          Promise.resolve(
+            json({ ok: true }, 200, { "Set-Cookie": clearCookie(request) }),
+          ),
+          env,
+          true,
+        );
       }
       if (request.method === "GET" && url.pathname === "/api/overview")
-        return await overview(env, now);
+        return await hub(env).fetch("https://hub/overview");
       const match = url.pathname.match(
         /^\/api\/servers\/([a-z0-9-]+)\/history$/,
       );

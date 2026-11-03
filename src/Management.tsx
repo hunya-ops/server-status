@@ -177,7 +177,9 @@ export function ServerManager({
 }) {
   const [id, setId] = useState(server?.id);
   const [name, setName] = useState(server?.name || "");
-  const [interval, setInterval] = useState(server?.intervalSeconds || 60);
+  const [interval, setInterval] = useState(
+    Math.min(10, server?.intervalSeconds || 5),
+  );
   const [sortOrder, setSortOrder] = useState(server?.sortOrder || 0);
   const [enabled, setEnabled] = useState(server?.enabled !== false);
   const [installation, setInstallation] = useState<Installation | null>(null);
@@ -254,8 +256,8 @@ export function ServerManager({
             采集间隔（秒）
             <input
               type="number"
-              min={30}
-              max={3600}
+              min={2}
+              max={10}
               value={interval}
               onChange={(event) => setInterval(Number(event.target.value))}
               required

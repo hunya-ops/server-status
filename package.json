@@ -36,7 +36,8 @@
     "typescript": "^7.0.2",
     "vite": "^8.3.4",
     "vitest": "^5.0.3",
-    "wrangler": "^4.149.0"
+    "wrangler": "^4.149.0",
+    "ws": "^8.22.1"
   },
   "cloudflare": {
     "bindings": {

@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """Linux metrics collector. Python 3 standard library only."""
 
+import base64
+import hashlib
+import random
+import ssl
+import struct
 import argparse
 import json
 import logging
@@ -130,7 +135,7 @@ def load_config(path, allow_http=False):
         raise ValueError("Endpoint must use HTTPS")
     if not url.hostname or url.username or url.password or url.query or url.fragment or url.path != "/api/ingest":
         raise ValueError("Invalid endpoint")
-    config["interval"] = max(30, min(3600, int(config.get("interval", 60))))
+    config["interval"] = max(2, min(10, int(config.get("interval", 5))))
     return config
 
 
@@ -149,6 +154,159 @@ def send(config, report):
     if not result.get("ok"):
         raise ValueError("Report was not accepted")
     return result
+
+
+class Unauthorized(ValueError):
+    pass
+
+
+class WebSocket:
+    """Small RFC 6455 client for the collector's bounded JSON protocol."""
+    def __init__(self, config):
+        self.sock = None
+        self.reader = None
+        url = urllib.parse.urlsplit(config["endpoint"])
+        try:
+            self.sock = socket.create_connection((url.hostname, url.port or (443 if url.scheme == "https" else 80)), timeout=10)
+            if url.scheme == "https":
+                self.sock = ssl.create_default_context().wrap_socket(self.sock, server_hostname=url.hostname)
+            self.reader = self.sock.makefile("rb")
+            key = base64.b64encode(os.urandom(16)).decode()
+            request = (f"GET /api/agent/connect HTTP/1.1\r\nHost: {url.netloc}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: {key}\r\nAuthorization: Bearer {config['token']}\r\nX-Server-Id: {config['serverId']}\r\nUser-Agent: status-agent/2.0\r\n\r\n")
+            self.sock.sendall(request.encode("ascii"))
+            status = self.reader.readline(4097)
+            if len(status) > 4096:
+                raise ValueError("Oversized handshake")
+            fields = status.split()
+            if len(fields) < 2:
+                raise ValueError("Invalid handshake")
+            if fields[1] in (b"401", b"403"):
+                raise Unauthorized("Agent credential rejected; re-enroll this server")
+            if fields[1] != b"101":
+                raise ValueError("WebSocket upgrade failed")
+            headers = {}
+            size = 0
+            while True:
+                line = self.reader.readline(4097)
+                size += len(line)
+                if size > 16384 or not line:
+                    raise ValueError("Invalid handshake headers")
+                if line == b"\r\n":
+                    break
+                name, value = line.decode("ascii").split(":", 1)
+                headers[name.lower()] = value.strip()
+            expected = base64.b64encode(hashlib.sha1((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest()).decode()
+            if headers.get("sec-websocket-accept") != expected or headers.get("upgrade", "").lower() != "websocket" or "upgrade" not in headers.get("connection", "").lower():
+                raise ValueError("Invalid WebSocket accept")
+            ready = self.receive()
+            if ready.get("type") != "ready":
+                raise ValueError("Missing ready message")
+            self.interval = max(2, min(10, int(ready.get("interval", 5))))
+        except Exception:
+            self.close()
+            raise
+
+    def exact(self, size):
+        data = b""
+        while len(data) < size:
+            chunk = self.reader.read(size - len(data))
+            if not chunk:
+                raise OSError("WebSocket disconnected")
+            data += chunk
+        return data
+
+    def frame(self, payload, opcode=1):
+        if len(payload) > 32768:
+            raise ValueError("Payload too large")
+        mask = os.urandom(4)
+        length = len(payload)
+        header = bytes([0x80 | opcode, 0x80 | length]) if length < 126 else bytes([0x80 | opcode, 0x80 | 126]) + struct.pack("!H", length)
+        self.sock.sendall(header + mask + bytes(value ^ mask[index % 4] for index, value in enumerate(payload)))
+
+    def receive(self):
+        while True:
+            first, second = self.exact(2)
+            opcode, length = first & 15, second & 127
+            if not first & 0x80 or first & 0x70 or second & 0x80:
+                raise ValueError("Unsupported WebSocket frame")
+            if length == 126:
+                length = struct.unpack("!H", self.exact(2))[0]
+            elif length == 127:
+                length = struct.unpack("!Q", self.exact(8))[0]
+            if length > 32768 or (opcode >= 8 and length > 125):
+                raise ValueError("Oversized server frame")
+            payload = self.exact(length)
+            if opcode == 8:
+                code = struct.unpack("!H", payload[:2])[0] if len(payload) >= 2 else 1000
+                if code == 4401:
+                    raise Unauthorized("Agent credential revoked")
+                raise OSError("Server closed WebSocket")
+            if opcode == 9:
+                self.frame(payload, 10)
+                continue
+            if opcode == 10:
+                continue
+            if opcode != 1:
+                raise ValueError("Unexpected server frame")
+            result = json.loads(payload)
+            if not isinstance(result, dict):
+                raise ValueError("Invalid server message")
+            return result
+
+    def send(self, report):
+        payload = json.dumps(report, separators=(",", ":"), allow_nan=False).encode()
+        self.frame(payload)
+        result = self.receive()
+        if result.get("type") != "ack":
+            raise ValueError("Missing acknowledgement")
+        return result
+
+    def close(self):
+        if self.reader is not None:
+            self.reader.close()
+        if self.sock is not None:
+            self.sock.close()
+
+
+def reconnect_delay(failures):
+    return random.uniform(0.5, 1.0) * min(60, 2 ** min(failures, 6))
+
+
+def run(config, once=False, connect=WebSocket):
+    failures = 0
+    while not STOP.is_set():
+        connection = None
+        try:
+            connection = connect(config)
+            config["interval"] = connection.interval
+            while not STOP.is_set():
+                started = time.monotonic()
+                report = collect(config["serverId"])
+                if STOP.is_set():
+                    return
+                result = connection.send(report)
+                # Reset only after an acknowledged sample, not a TCP handshake.
+                failures = 0
+                interval = result.get("interval", config["interval"])
+                if isinstance(interval, int) and 2 <= interval <= 10:
+                    config["interval"] = interval
+                if once:
+                    return
+                STOP.wait(max(0, config["interval"] - (time.monotonic() - started)))
+        except Unauthorized:
+            logging.error("Agent credential rejected; update enrollment in the panel")
+            if once:
+                raise SystemExit(1)
+            failures = max(failures, 6)
+        except (OSError, ValueError):
+            logging.warning("Connection interrupted; reconnecting")
+            if once:
+                raise SystemExit(1)
+        finally:
+            if connection is not None:
+                connection.close()
+        STOP.wait(reconnect_delay(failures))
+        failures += 1
 
 
 def main():
@@ -170,28 +328,7 @@ def main():
         raise SystemExit(str(error))
     for event in (signal.SIGTERM, signal.SIGINT):
         signal.signal(event, lambda *_: STOP.set())
-    while not STOP.is_set():
-        started = time.monotonic()
-        try:
-            report = collect(config["serverId"])
-            if STOP.is_set():
-                break
-            result = send(config, report)
-            interval = result.get("interval")
-            if isinstance(interval, int) and 30 <= interval <= 3600:
-                config["interval"] = interval
-            logging.info("Metrics uploaded for %s", config["serverId"])
-        except urllib.error.HTTPError as error:
-            logging.error("Upload returned HTTP %s", error.code)
-            if args.once:
-                raise SystemExit(1)
-        except (OSError, ValueError, urllib.error.URLError):
-            logging.error("Collection or upload failed; retrying next interval")
-            if args.once:
-                raise SystemExit(1)
-        if args.once:
-            break
-        STOP.wait(max(0, config["interval"] - (time.monotonic() - started)))
+    run(config, args.once)
 
 
 if __name__ == "__main__":

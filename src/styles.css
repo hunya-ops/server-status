@@ -1570,3 +1570,8 @@ textarea:focus-visible {
     align-items: flex-start;
   }
 }
+
+.state-badge.stale {
+  color: var(--warning, #ad741c);
+  background: #ad741c14;
+}

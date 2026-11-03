@@ -63,10 +63,10 @@ def enroll(panel_url, server_id, code, pending_path, output_path, allow_local_ht
             raise ValueError("Enrollment code expired or already used; generate a new command in the panel") from None
         raise ValueError(f"Enrollment failed (HTTP {error.code})") from None
     interval = result.get("interval")
-    if not result.get("ok") or result.get("serverId") != server_id or not isinstance(interval, int) or not 30 <= interval <= 3600:
+    if not result.get("ok") or result.get("serverId") != server_id or not isinstance(interval, int) or not 2 <= interval <= 3600:
         raise ValueError("Invalid enrollment response")
     config = {key: pending[key] for key in ("serverId", "endpoint", "token")}
-    config["interval"] = interval
+    config["interval"] = max(2, min(10, interval))
     write_config(output_path, config)
     return config
 

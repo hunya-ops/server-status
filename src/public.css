@@ -472,3 +472,7 @@
     transition: none;
   }
 }
+
+.public-node-state.stale {
+  color: #ad741c;
+}

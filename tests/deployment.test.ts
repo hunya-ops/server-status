@@ -6,11 +6,11 @@ import { preserveDashboardDomains } from "../scripts/dashboard-domains.mjs";
 
 describe("independent deployment configuration", () => {
   const noLocalFile = "/tmp/status-test-no-instance-config.json";
-  it("starts with the default domain enabled and preview URLs disabled", async () => {
+  it("starts with the default domain disabled and preview URLs disabled", async () => {
     const config = await deploymentConfig({}, noLocalFile);
     expect(config.account_id).toBeUndefined();
     expect(config.routes).toBeUndefined();
-    expect(config.workers_dev).toBe(true);
+    expect(config.workers_dev).toBe(false);
     expect(config.preview_urls).toBe(false);
     expect(config.d1_databases[0].binding).toBe("DB");
   });
@@ -30,7 +30,7 @@ describe("independent deployment configuration", () => {
       { pattern: "status.example.com", custom_domain: true },
     ]);
     expect(config.d1_databases[0].database_name).toBe("custom-database");
-    expect(config.workers_dev).toBe(true);
+    expect(config.workers_dev).toBe(false);
     await expect(
       deploymentConfig({ STATUS_DOMAIN: "example.workers.dev" }, noLocalFile),
     ).rejects.toThrow("custom domain");
@@ -45,7 +45,7 @@ describe("independent deployment configuration", () => {
       { STATUS_WORKERS_DEV: "true" },
       noLocalFile,
     );
-    expect(enabled.workers_dev).toBe(true);
+    expect(enabled.workers_dev).toBe(false);
     await expect(
       deploymentConfig({ STATUS_WORKERS_DEV: "invalid" }, noLocalFile),
     ).rejects.toThrow("STATUS_WORKERS_DEV");
@@ -82,7 +82,7 @@ describe("dashboard domain settings across deployments", () => {
       Response.json(url.endsWith("/deployments") ? deployed : body, { status });
 
   it.each([true, false])(
-    "preserves the dashboard switch (%s) and leaves dashboard domains/routes alone",
+    "disables workers.dev (previously %s) and leaves dashboard domains/routes alone",
     async (enabled) => {
       const config = await preserveDashboardDomains(
         { ...initialConfig(), workers_dev: !enabled },
@@ -101,7 +101,7 @@ describe("dashboard domain settings across deployments", () => {
       );
       expect(config.name).toBe("users-panel");
       expect(config.account_id).toBe("example-account");
-      expect(config.workers_dev).toBe(enabled);
+      expect(config.workers_dev).toBe(false);
       expect(config.preview_urls).toBe(false);
       expect(config).not.toHaveProperty("routes");
       expect(config).not.toHaveProperty("route");

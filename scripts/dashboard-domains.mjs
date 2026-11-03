@@ -1,5 +1,5 @@
-// Wrangler reapplies workers_dev on every deploy. Read the dashboard choice
-// before deploying, and leave custom domains/routes under dashboard control.
+// Preserve custom domains/routes under dashboard control while enforcing
+// disabled workers.dev and preview URLs on every deployment.
 export async function preserveDashboardDomains(
   config,
   environment = process.env,
@@ -72,7 +72,7 @@ export async function preserveDashboardDomains(
     throw new Error(
       "Cloudflare returned invalid domain settings. Retry the build.",
     );
-  config.workers_dev = subdomain.enabled;
+  config.workers_dev = false;
   delete config.route;
   delete config.routes;
   return config;

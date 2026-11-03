@@ -4,6 +4,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { resolve } from "node:path";
 import { createServer } from "node:net";
 import assert from "node:assert/strict";
+import WebSocket from "ws";
 
 const directory = resolve(".local/integration");
 await mkdir(directory, { recursive: true });
@@ -23,6 +24,10 @@ const config = {
     not_found_handling: "single-page-application",
     run_worker_first: ["/api/*"],
   },
+  durable_objects: {
+    bindings: [{ name: "REALTIME", class_name: "RealtimeHub" }],
+  },
+  migrations: [{ tag: "realtime-v1", new_sqlite_classes: ["RealtimeHub"] }],
   d1_databases: [
     {
       binding: "DB",
@@ -75,7 +80,7 @@ function sql(statement) {
   );
 }
 command(["d1", "migrations", "apply", "DB", "--local"]);
-const child = spawn(
+let child = spawn(
   process.execPath,
   [
     cli,
@@ -116,6 +121,32 @@ async function request(
     body: body === undefined ? undefined : JSON.stringify(body),
     signal: AbortSignal.timeout(15000),
   });
+}
+const sockets = [];
+async function openSocket(path, headers = {}) {
+  const ws = new WebSocket(origin.replace("http:", "ws:") + path, {
+    headers: { Origin: origin, ...headers },
+  });
+  sockets.push(ws);
+  const messages = [];
+  ws.on("message", (data) => {
+    if (data.toString() !== "pong") messages.push(JSON.parse(data));
+  });
+  await new Promise((resolve, reject) => {
+    ws.once("open", resolve);
+    ws.once("error", reject);
+  });
+  async function waitFor(predicate) {
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      const value = messages.find(predicate);
+      if (value) return value;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    throw new Error("Realtime message exceeded 5 seconds");
+  }
+  await waitFor((m) => m.type === "snapshot");
+  return { ws, messages, waitFor };
 }
 const cookieOf = (response) => response.headers.get("set-cookie").split(";")[0];
 const codeOf = (result) => result.command.match(/--enroll ([a-z0-9]+)/)[1];
@@ -238,7 +269,7 @@ try {
       await request("/api/servers", {
         method: "POST",
         cookie,
-        body: { name: "", intervalSeconds: 60 },
+        body: { name: "", intervalSeconds: 5 },
       })
     ).status,
     400,
@@ -248,7 +279,7 @@ try {
       await request("/api/servers", {
         method: "POST",
         cookie,
-        body: { name: "Bad interval", intervalSeconds: 10 },
+        body: { name: "Bad interval", intervalSeconds: 11 },
       })
     ).status,
     400,
@@ -267,7 +298,7 @@ try {
   const created = await request("/api/servers", {
     method: "POST",
     cookie,
-    body: { name: "Example server", intervalSeconds: 60 },
+    body: { name: "Example server", intervalSeconds: 5 },
   });
   assert.equal(created.status, 201);
   const server = await created.json();
@@ -467,6 +498,32 @@ try {
     ).status,
     400,
   );
+  const publicLive = await openSocket("/api/public/live");
+  const privateLive = await openSocket("/api/live", { Cookie: cookie });
+  assert.equal(privateLive.messages[0].data.servers.length, 2);
+  for (const [path, headers, expected] of [
+    ["/api/live", {}, 401],
+    [
+      "/api/agent/connect",
+      { Authorization: "Bearer " + "b".repeat(64), "X-Server-Id": server.id },
+      401,
+    ],
+    ["/api/public/live", { Origin: "https://other.example" }, 403],
+  ]) {
+    const denied = new WebSocket(origin.replace("http:", "ws:") + path, {
+      headers: { Origin: origin, ...headers },
+    });
+    denied.on("error", () => {});
+    const status = await new Promise((resolve) =>
+      denied.on("unexpected-response", (_request, response) => {
+        response.resume();
+        resolve(response.statusCode);
+        denied.terminate();
+      }),
+    );
+    assert.equal(status, expected);
+  }
+  const sentAt = Date.now();
   const accepted = await request("/api/ingest", {
     method: "POST",
     body: sample,
@@ -479,6 +536,29 @@ try {
   });
   assert.equal(accepted.status, 200);
   assert.equal((await accepted.json()).accepted, true);
+  await privateLive.waitFor(
+    (m) => m.type === "update" && m.server.id === server.id,
+  );
+  await publicLive.waitFor(
+    (m) =>
+      (m.type === "snapshot" &&
+        m.data.servers.some((s) => s.country === "JP")) ||
+      (m.type === "update" && m.server.country === "JP"),
+  );
+  assert(
+    Date.now() - sentAt < 5000,
+    "Realtime delivery must be under five seconds",
+  );
+  for (const value of [
+    server.id,
+    other.id,
+    token,
+    "integration-server",
+    "/srv/private-data",
+    "192.0.2.10",
+  ])
+    assert(!JSON.stringify(publicLive.messages).includes(value));
+
   assert.equal(
     (
       await (
@@ -649,6 +729,9 @@ try {
   const beforeRename = (
     await (await request("/api/overview", { cookie })).json()
   ).servers.find((row) => row.id === server.id);
+  await sql(
+    `INSERT INTO metrics (server_id, minute, cpu, memory, disk) VALUES ('${server.id}', ${Math.floor(now / 300) * 300},32,40,30);`,
+  );
   const beforeHistory = (
     await (
       await request(`/api/servers/${server.id}/history?range=1h`, { cookie })
@@ -692,7 +775,7 @@ try {
   const renamedPublic = await (await request("/api/public/uptime")).json();
   // Uptime percentages advance with wall time; compare the remaining fields
   // and node order directly, and check the public field allowlist again.
-  const stablePublic = ({ uptimePercent, days, ...fields }) => ({
+  const stablePublic = ({ uptimePercent, uptimeSeconds, days, ...fields }) => ({
     ...fields,
     dates: days.map((day) => day.date),
   });
@@ -747,10 +830,107 @@ try {
     (await request("/api/servers/not-found/history", { cookie })).status,
     404,
   );
+  // The real Python stdlib WebSocket client runs against workerd.
+  const probeAgent = spawn(
+    process.env.STATUS_PYTHON || "python3",
+    [
+      resolve("agent/status_agent.py"),
+      "--config",
+      `${directory}/agent.json`,
+      "--once",
+      "--allow-local-http",
+    ],
+    { stdio: ["ignore", "pipe", "pipe"] },
+  );
+  let agentError = "";
+  probeAgent.stderr.on("data", (chunk) => (agentError += chunk));
+  assert.equal(
+    await new Promise((resolve) => probeAgent.on("exit", resolve)),
+    0,
+    agentError,
+  );
+  const afterProbe = await (await request("/api/overview", { cookie })).json();
+  assert(afterProbe.servers.find((row) => row.id === other.id).report);
+  assert(
+    afterProbe.servers.find((row) => row.id === server.id).report.serverId ===
+      server.id,
+  );
+  // Two independent agent connections send concurrently and remain isolated.
+  async function agentSocket(id, credential) {
+    const ws = new WebSocket(
+      origin.replace("http:", "ws:") + "/api/agent/connect",
+      { headers: { Authorization: "Bearer " + credential, "X-Server-Id": id } },
+    );
+    sockets.push(ws);
+    ws.on("error", () => {});
+    await new Promise((resolve, reject) => {
+      ws.once("message", (data) => {
+        assert.equal(JSON.parse(data).type, "ready");
+        resolve();
+      });
+      ws.once("error", reject);
+    });
+    return ws;
+  }
+  const [agentA, agentB] = await Promise.all([
+    agentSocket(server.id, token),
+    agentSocket(other.id, agent.token),
+  ]);
+  const stamp = Math.floor(Date.now() / 1000) + 1;
+  const ackA = new Promise((resolve) =>
+    agentA.once("message", (data) => resolve(JSON.parse(data))),
+  );
+  const ackB = new Promise((resolve) =>
+    agentB.once("message", (data) => resolve(JSON.parse(data))),
+  );
+  agentA.send(
+    JSON.stringify({
+      ...sample,
+      collectedAt: stamp,
+      cpu: { ...sample.cpu, usagePercent: 17 },
+    }),
+  );
+  agentB.send(
+    JSON.stringify({
+      ...sample,
+      serverId: other.id,
+      collectedAt: stamp,
+      cpu: { ...sample.cpu, usagePercent: 61 },
+    }),
+  );
+  assert.equal((await ackA).accepted, true);
+  assert.equal((await ackB).accepted, true);
+  const concurrent = (await (await request("/api/overview", { cookie })).json())
+    .servers;
+  assert.equal(
+    concurrent.find((s) => s.id === server.id).report.cpu.usagePercent,
+    17,
+  );
+  assert.equal(
+    concurrent.find((s) => s.id === other.id).report.cpu.usagePercent,
+    61,
+  );
+  const closedAgent = new Promise((resolve) =>
+    agentA.once("close", (code) => resolve(code)),
+  );
+  // Samples never create snapshots or per-sample metric rows.
+  const counts = JSON.parse(
+    command([
+      "d1",
+      "execute",
+      "DB",
+      "--local",
+      "--command",
+      "SELECT (SELECT COUNT(*) FROM snapshots) AS snapshots, (SELECT COUNT(*) FROM metrics) AS metrics",
+      "--json",
+    ]),
+  );
+  assert.equal(counts[0].results[0].snapshots, 0);
+  assert.equal(counts[0].results[0].metrics, 1);
   const updated = {
     name: "Renamed server",
     enabled: false,
-    intervalSeconds: 300,
+    intervalSeconds: 10,
     sortOrder: 4,
   };
   assert.equal(
@@ -808,7 +988,7 @@ try {
         })
       ).json()
     ).interval,
-    300,
+    10,
   );
   const settings = {
     siteName: "Example monitor",
@@ -859,6 +1039,11 @@ try {
     401,
   );
   assert.equal(
+    await closedAgent,
+    4401,
+    "Revocation closes an existing authenticated socket",
+  );
+  assert.equal(
     (await request(`/api/servers/${server.id}`, { method: "DELETE", cookie }))
       .status,
     200,
@@ -866,6 +1051,65 @@ try {
   assert.equal(
     (await request(`/api/servers/${server.id}/history`, { cookie })).status,
     404,
+  );
+  // Restart workerd with the same storage. Browsers reconnect for a fresh
+  // snapshot; the next agent report rebuilds volatile state automatically.
+  for (const ws of sockets) ws.terminate();
+  const stopped = new Promise((resolve) => child.once("exit", resolve));
+  child.kill("SIGTERM");
+  await stopped;
+  child = spawn(
+    process.execPath,
+    [
+      cli,
+      "dev",
+      "--local",
+      "--ip",
+      "127.0.0.1",
+      "--port",
+      String(port),
+      ...common,
+    ],
+    {
+      env: { ...process.env, WRANGLER_SEND_METRICS: "false", CI: "true" },
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  child.stdout.on("data", (chunk) => (logs += chunk));
+  child.stderr.on("data", (chunk) => (logs += chunk));
+  let restarted = false;
+  for (let attempt = 0; attempt < 100; attempt++) {
+    try {
+      if ((await request("/api/session")).ok) {
+        restarted = true;
+        break;
+      }
+    } catch {}
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  assert(restarted, "Worker restart failed");
+  const recoveredLive = await openSocket("/api/live", { Cookie: cookie });
+  assert.equal(recoveredLive.messages[0].data.servers[0].report, null);
+  const resume = spawn(
+    process.env.STATUS_PYTHON || "python3",
+    [
+      resolve("agent/status_agent.py"),
+      "--config",
+      `${directory}/agent.json`,
+      "--once",
+      "--allow-local-http",
+    ],
+    { stdio: ["ignore", "pipe", "pipe"] },
+  );
+  let resumeError = "";
+  resume.stderr.on("data", (chunk) => (resumeError += chunk));
+  assert.equal(
+    await new Promise((resolve) => resume.on("exit", resolve)),
+    0,
+    resumeError,
+  );
+  await recoveredLive.waitFor(
+    (m) => m.type === "update" && m.server.id === other.id && m.server.report,
   );
   const newPassword = password + "-changed";
   assert.equal(
@@ -939,9 +1183,10 @@ try {
     { mode: 0o600 },
   );
   console.log(
-    "Integration passed: public uptime privacy, homepage/admin routes, empty instance, protected setup, sessions, server management, enrollment retry/expiry/isolation, Python bootstrap, metrics/history, connection IP persistence/updates, revocation, password rotation, rate limits and versioned installer assets.",
+    "Integration passed: realtime snapshots/deltas under 5s, WebSocket auth, concurrent agent isolation, worker restart/recovery, zero snapshot writes, five-minute history, public uptime privacy, homepage/admin routes, empty instance, protected setup, sessions, server management, enrollment retry/expiry/isolation, Python bootstrap, metrics/history, connection IP persistence/updates, revocation, password rotation, rate limits and versioned installer assets.",
   );
 } finally {
+  for (const ws of sockets) ws.terminate();
   await writeFile(`${directory}/worker.log`, logs, { mode: 0o600 });
   child.kill("SIGTERM");
 }

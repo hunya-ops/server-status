@@ -9,7 +9,7 @@ export interface UptimeDay {
 export interface PublicServer {
   country: string | null;
   city: string | null;
-  state: "online" | "offline" | "pending";
+  state: "online" | "offline" | "stale" | "pending";
   uptimeSeconds: number | null;
   cpuCores: number | null;
   memoryTotalBytes: number | null;

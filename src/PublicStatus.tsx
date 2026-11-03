@@ -7,10 +7,15 @@ import {
   type PublicServer,
   type UptimeDay,
 } from "../shared/uptime";
-import { api } from "./api";
+import { LiveStream, applyPublic, stalePublic } from "./live";
 import "./public.css";
 
-const stateNames = { online: "在线", offline: "上报中断", pending: "等待上报" };
+const stateNames = {
+  online: "在线",
+  offline: "离线",
+  stale: "数据陈旧",
+  pending: "等待上报",
+};
 const percent = (value: number | null) =>
   value === null ? "—" : `${value.toFixed(2)}%`;
 const dayState = (value: number | null) =>
@@ -104,40 +109,51 @@ export default function PublicStatus() {
   const [data, setData] = useState<PublicOverview | null>(null);
   const [error, setError] = useState("");
   const [refreshing, setRefreshing] = useState(false);
-  const fetching = useRef(false);
+  const stream = useRef<LiveStream | null>(null);
+  const [clock, setClock] = useState(Date.now() / 1000);
+  const [offset, setOffset] = useState(0);
   async function refresh() {
-    if (fetching.current) return;
-    fetching.current = true;
     setRefreshing(true);
-    try {
-      setData(await api<PublicOverview>("/api/public/uptime"));
-      setError("");
-    } catch {
-      setError("暂时无法获取状态");
-    } finally {
-      fetching.current = false;
-      setRefreshing(false);
-    }
+    stream.current?.restart();
   }
   useEffect(() => {
     document.title = "Status · Uptime";
-    void refresh();
-    const interval = setInterval(() => {
-      if (document.visibilityState === "visible") void refresh();
-    }, 30000);
+    const live = new LiveStream(
+      "/api/public/live",
+      (message) => {
+        setData((current) => applyPublic(current, message));
+        const generatedAt =
+          message.type === "snapshot"
+            ? message.data.generatedAt
+            : message.generatedAt;
+        setOffset(generatedAt - Date.now() / 1000);
+        setError("");
+        setRefreshing(false);
+      },
+      (connected) => {
+        if (!connected) setError("连接中断，正在重连");
+      },
+    );
+    stream.current = live;
+    setRefreshing(true);
+    live.start();
+    const timer = setInterval(() => setClock(Date.now() / 1000), 1000);
     const visible = () => {
-      if (document.visibilityState === "visible") void refresh();
+      if (document.visibilityState === "visible") live.restart();
     };
     document.addEventListener("visibilitychange", visible);
     return () => {
-      clearInterval(interval);
+      live.stop();
+      clearInterval(timer);
       document.removeEventListener("visibilitychange", visible);
     };
   }, []);
-
-  const servers = data?.servers ?? [];
+  const current = stalePublic(data, clock + offset);
+  const servers = current?.servers ?? [];
   const offline = servers.filter((server) => server.state === "offline").length;
-  const pending = servers.filter((server) => server.state === "pending").length;
+  const pending = servers.filter((server) =>
+    ["pending", "stale"].includes(server.state),
+  ).length;
   const overall = error
     ? "unknown"
     : offline
@@ -156,7 +172,7 @@ export default function PublicStatus() {
         : offline
           ? `${offline} 个节点上报中断`
           : pending
-            ? `${pending} 个节点等待上报`
+            ? `${pending} 个节点等待更新`
             : "所有节点运行正常";
   return (
     <div className="public-page">
